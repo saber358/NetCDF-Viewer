@@ -29,4 +29,19 @@ replay_pid*
 /tools/*.zip
 
 # Temporary images accidentally written to repo root
-/{*.png
+/*.png
+/*.jpg
+/*.jpeg
+
+# Common Java / Eclipse metadata
+/.settings/
+.classpath
+.project
+.factorypath
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
