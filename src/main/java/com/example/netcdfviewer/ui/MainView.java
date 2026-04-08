@@ -29,57 +29,102 @@ import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
+/**
+ * 主界面视图类。
+ * 该类专门负责创建和组织界面控件，不直接处理业务逻辑。
+ */
 public final class MainView extends BorderPane {
+    // 帮助菜单。
     private final Menu helpMenu = new Menu("Help");
+    // 打开文件菜单项。
     private final MenuItem openMenuItem = new MenuItem("Open...");
+    // 导出 PNG 菜单项。
     private final MenuItem exportPngMenuItem = new MenuItem("Export PNG...");
+    // 退出菜单项。
     private final MenuItem exitMenuItem = new MenuItem("Exit");
+    // 关于菜单项。
     private final MenuItem aboutMenuItem = new MenuItem("About");
+    // 打开文件按钮。
     private final Button openButton = new Button("Open");
+    // 导出按钮。
     private final Button exportButton = new Button("Export PNG");
+    // 重置视图按钮。
     private final Button resetViewButton = new Button("Reset View");
+    // 手动触发渲染按钮。
     private final Button visualizeButton = new Button("Visualize");
+    // 手动应用范围按钮。
     private final Button applyRangeButton = new Button("Apply Range");
+    // 变量列表。
     private final ListView<VariableInfo> variableList = new ListView<>();
+    // 数据摘要区域。
     private final TextArea summaryArea = new TextArea();
+    // 全局属性区域。
     private final TextArea attributesArea = new TextArea();
+    // 警告信息区域。
     private final TextArea warningsArea = new TextArea();
+    // 主图区域中央的覆盖提示文字。
     private final Label overlayLabel = new Label("Open a NetCDF file to begin.");
+    // 当前文件名标签。
     private final Label datasetLabel = new Label("No file loaded");
+    // 当前变量标签。
     private final Label currentVariableLabel = new Label("Variable: -");
+    // 坐标变量标签。
     private final Label coordinateVariableLabel = new Label("Coordinates: -");
+    // 连接变量标签。
     private final Label connectivityVariableLabel = new Label("Connectivity: -");
+    // 变量细节标签。
     private final Label variableMetaLabel = new Label("Variable details: -");
+    // 图层信息标签。
     private final Label layerInfoLabel = new Label("Layer: -");
+    // 数值范围标签。
     private final Label rangeInfoLabel = new Label("Range: -");
+    // 状态栏主状态标签。
     private final Label statusLabel = new Label("Ready");
+    // 状态栏作者信息标签。
     private final Label authorLabel = new Label(AppMetadata.AUTHOR_LABEL);
+    // 深度层滑块。
     private final Slider depthSlider = new Slider(0, 0, 0);
+    // 颜色表下拉框。
     private final ComboBox<String> colorMapCombo = new ComboBox<>();
+    // 自动范围复选框。
     private final CheckBox autoRangeCheck = new CheckBox("Auto range");
+    // 手动最小值输入框。
     private final TextField minField = new TextField();
+    // 手动最大值输入框。
     private final TextField maxField = new TextField();
+    // 主渲染画布。
     private final Canvas renderCanvas = new Canvas(900, 720);
+    // 色条画布。
     private final ColorBarCanvas colorBarCanvas = new ColorBarCanvas();
+    // 主画布宿主容器。
     private final StackPane canvasHost = new StackPane();
+    // 主画布和色条组合容器。
     private final HBox visualizationBox = new HBox(12);
 
     public MainView() {
+        // 构造时立即生成整套界面布局。
         build();
     }
 
     private void build() {
+        // 设置根容器内边距。
         setPadding(new Insets(8));
 
+        // 创建文件菜单并挂载常用文件操作。
         Menu fileMenu = new Menu("File");
         fileMenu.getItems().addAll(openMenuItem, exportPngMenuItem, exitMenuItem);
+        // 将关于菜单项加入帮助菜单。
         helpMenu.getItems().add(aboutMenuItem);
+        // 顶部菜单栏同时显示文件菜单和帮助菜单。
         MenuBar menuBar = new MenuBar(fileMenu, helpMenu);
 
+        // 顶部工具栏提供打开、导出和重置视图等快捷操作。
         ToolBar toolBar = new ToolBar(openButton, exportButton, resetViewButton, new Separator(), datasetLabel);
+        // 菜单栏与工具栏一起组成顶部区域。
         VBox topBox = new VBox(menuBar, toolBar);
         setTop(topBox);
 
+        // 统一配置几个只读文本区域。
         configureTextArea(summaryArea);
         configureTextArea(attributesArea);
         configureTextArea(warningsArea);
@@ -87,6 +132,7 @@ public final class MainView extends BorderPane {
         variableList.setPlaceholder(new Label("No variables"));
         variableList.setPrefHeight(260);
 
+        // 左侧标签页分别显示摘要、属性和警告信息。
         TabPane leftTabs = new TabPane(
             createTab("Summary", summaryArea),
             createTab("Attributes", attributesArea),
@@ -95,25 +141,32 @@ public final class MainView extends BorderPane {
         VBox.setVgrow(leftTabs, Priority.ALWAYS);
 
         Label variableListLabel = new Label("Variables");
+        // 左侧面板由变量列表和信息标签页组成。
         VBox leftPanel = new VBox(8, variableListLabel, variableList, leftTabs);
         leftPanel.setPadding(new Insets(12));
         leftPanel.setPrefWidth(330);
 
+        // 设置覆盖提示文字样式，便于在空白或加载状态下提示用户。
         overlayLabel.setStyle("-fx-font-size: 16px; -fx-text-fill: #4A5568; -fx-background-color: rgba(255,255,255,0.88); -fx-padding: 16 20 16 20; -fx-background-radius: 10;");
         overlayLabel.setWrapText(true);
         overlayLabel.setMaxWidth(420);
         overlayLabel.setMouseTransparent(true);
 
+        // 设置主画布背景和边框样式。
         canvasHost.setStyle("-fx-background-color: linear-gradient(to bottom, #F8FBFD, #EEF3F7); -fx-border-color: #D0D7DE; -fx-border-radius: 8; -fx-background-radius: 8;");
         canvasHost.setPrefSize(900, 720);
+        // 让 Canvas 不参与父容器的自动尺寸计算，防止出现反复放大问题。
         renderCanvas.setManaged(false);
+        // 画布与覆盖提示都叠放在同一个容器内。
         canvasHost.getChildren().addAll(renderCanvas, overlayLabel);
         StackPane.setAlignment(renderCanvas, Pos.TOP_LEFT);
         StackPane.setAlignment(overlayLabel, Pos.CENTER);
 
+        // 中间区域左边放主图，右边放色条。
         visualizationBox.getChildren().addAll(canvasHost, colorBarCanvas);
         HBox.setHgrow(canvasHost, Priority.ALWAYS);
 
+        // 中央面板上方显示变量名，下方显示图形区域。
         VBox centerPanel = new VBox(8, currentVariableLabel, visualizationBox);
         centerPanel.setPadding(new Insets(12));
         VBox.setVgrow(visualizationBox, Priority.ALWAYS);
@@ -129,8 +182,10 @@ public final class MainView extends BorderPane {
         autoRangeCheck.setSelected(true);
         minField.setPromptText("Min");
         maxField.setPromptText("Max");
+        // 手动范围区由最小值、最大值和应用按钮组成。
         HBox rangeBox = new HBox(8, minField, maxField, applyRangeButton);
 
+        // 右侧面板用于放置坐标、层控制、颜色表和范围控制。
         VBox rightPanel = new VBox(
             10,
             coordinateVariableLabel,
@@ -150,14 +205,17 @@ public final class MainView extends BorderPane {
         rightPanel.setPrefWidth(280);
         rightPanel.setStyle("-fx-background-color: #FBFCFE; -fx-border-color: #D0D7DE; -fx-border-radius: 8; -fx-background-radius: 8;");
 
+        // 用滚动容器包裹右侧控制区，以适应较小窗口尺寸。
         ScrollPane rightScroll = new ScrollPane(rightPanel);
         rightScroll.setFitToWidth(true);
         rightScroll.setFitToHeight(true);
 
+        // 左中右三部分组成主界面主体。
         SplitPane splitPane = new SplitPane(leftPanel, centerPanel, rightScroll);
         splitPane.setDividerPositions(0.22, 0.8);
         setCenter(splitPane);
 
+        // 用弹性区域把状态文本和作者信息分隔到左右两端。
         Region statusSpacer = new Region();
         HBox.setHgrow(statusSpacer, Priority.ALWAYS);
         authorLabel.setStyle("-fx-text-fill: #475569;");
@@ -169,14 +227,18 @@ public final class MainView extends BorderPane {
     }
 
     private Tab createTab(String title, TextArea area) {
+        // 创建不可关闭的标签页，保证布局稳定。
         Tab tab = new Tab(title, area);
         tab.setClosable(false);
         return tab;
     }
 
     private void configureTextArea(TextArea area) {
+        // 信息区统一设置为只读。
         area.setEditable(false);
+        // 关闭自动换行，保持原始文本结构。
         area.setWrapText(false);
+        // 设置默认显示行数。
         area.setPrefRowCount(10);
     }
 
