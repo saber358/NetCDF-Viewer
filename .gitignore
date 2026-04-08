@@ -1,0 +1,32 @@
+# Build output
+/target/
+/out/
+
+# IDE and local tooling
+/.idea/
+/.vscode/
+/.jshell-prefs/
+*.iml
+*.ipr
+*.iws
+
+# OS / JVM noise
+.DS_Store
+Thumbs.db
+hs_err_pid*
+replay_pid*
+*.log
+
+# Local sample datasets and exports
+/*.nc
+/target/*.png
+/target/*.jpg
+/target/*.jpeg
+/target/*.webp
+
+# Local packaging tool cache
+/tools/wix314/
+/tools/*.zip
+
+# Temporary images accidentally written to repo root
+/{*.png
