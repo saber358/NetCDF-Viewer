@@ -72,7 +72,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\package-exe.ps1
 
 ## 界面预览
 
-当前仓库尚未内置正式截图资源，但应用主界面包含以下区域：
+应用主界面主要由以下区域组成：
 
 - 顶部菜单栏与工具栏
 - 左侧变量与元数据面板
@@ -80,7 +80,21 @@ powershell -ExecutionPolicy Bypass -File .\scripts\package-exe.ps1
 - 右侧图层、颜色映射和范围控制区
 - 底部状态栏与作者信息
 
-如果后续准备正式公开发布，建议补充：
+下面给出两个实际运行界面示例。
+
+### 示例 1：`donghai.nc` 单层单元变量平面渲染
+
+该示例展示了单层单元变量 `h_center` 的二维平面填色结果，界面中可同时看到变量列表、网格渲染主图、颜色条和右侧参数控制区，适合体现软件的整体布局与核心使用流程。
+
+![donghai.nc 渲染界面](docs/images/readme/preview-donghai-h-center.png)
+
+### 示例 2：`ydw.nc` 数据渲染界面
+
+该示例展示了 `ydw.nc` 数据文件在软件中的实际显示效果，可直观看到非结构化三角网属性在海域范围内的空间分布情况，同时保留了右侧颜色映射与范围控制信息。
+
+![ydw.nc 渲染界面](docs/images/readme/preview-ydw-h-center.png)
+
+如果后续准备进一步完善公开展示效果，建议继续补充：
 
 - 主界面截图
 - 打开示例数据后的渲染截图
