@@ -9,9 +9,12 @@ import javafx.stage.Stage;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+
+import javax.xml.parsers.DocumentBuilderFactory;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -51,7 +54,7 @@ class AppBootstrapTest {
         assertTrue(view.getExportButton().isDisabled());
         assertTrue(view.getVisualizeButton().isDisabled());
         assertEquals("Viridis", view.getColorMapCombo().getValue());
-        assertEquals("1.0.2", AppMetadata.VERSION);
+        assertEquals(readPomVersion(), AppMetadata.VERSION);
         assertEquals("lwj", AppMetadata.AUTHOR_NAME);
         assertEquals("2762692204@qq.com", AppMetadata.AUTHOR_EMAIL);
         assertEquals("Author: lwj | 2762692204@qq.com", view.getAuthorLabel().getText());
@@ -59,5 +62,11 @@ class AppBootstrapTest {
         assertEquals("About", view.getAboutMenuItem().getText());
         assertNotNull(App.class.getResource("/icons/app-icon.png"));
         assertNotNull(App.class.getResource("/icons/app-icon.ico"));
+    }
+
+    private String readPomVersion() throws Exception {
+        var documentBuilder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
+        var document = documentBuilder.parse(Path.of("pom.xml").toFile());
+        return document.getElementsByTagName("version").item(0).getTextContent().trim();
     }
 }

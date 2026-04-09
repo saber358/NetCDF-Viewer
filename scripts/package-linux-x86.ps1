@@ -3,15 +3,41 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $projectRoot
 
-$appVersion = "1.0.2"
-$jarName = "netcdf-viewer-$appVersion.jar"
+function Get-PomProject([string]$rootPath) {
+    $pomPath = Join-Path $rootPath "pom.xml"
+    if (-not (Test-Path $pomPath)) {
+        throw "pom.xml not found: $pomPath"
+    }
+    [xml]$pom = Get-Content -LiteralPath $pomPath
+    return $pom.project
+}
+
+function Get-ProjectVersion([string]$rootPath) {
+    $version = (Get-PomProject $rootPath).version
+    if ([string]::IsNullOrWhiteSpace($version)) {
+        throw "Project version is missing in pom.xml"
+    }
+    return $version.Trim()
+}
+
+function Get-ProjectArtifactId([string]$rootPath) {
+    $artifactId = (Get-PomProject $rootPath).artifactId
+    if ([string]::IsNullOrWhiteSpace($artifactId)) {
+        throw "Project artifactId is missing in pom.xml"
+    }
+    return $artifactId.Trim()
+}
+
+$appVersion = Get-ProjectVersion $projectRoot
+$artifactId = Get-ProjectArtifactId $projectRoot
+$jarName = "$artifactId-$appVersion.jar"
 $packageInput = Join-Path $projectRoot "target\package-linux-input"
 $installerDir = Join-Path $projectRoot "target\installer-linux"
 $runtimeLibDir = Join-Path $projectRoot "target\app\lib"
 $jarPath = Join-Path $projectRoot ("target\" + $jarName)
 $javafxModuleDir = Join-Path $projectRoot "target\javafx-modules-linux"
 $iconPath = Join-Path $projectRoot "src\main\resources\icons\app-icon.png"
-$finalDebPath = Join-Path $installerDir "NetCDFViewer-linux-x86_64-1.0.2.deb"
+$finalDebPath = Join-Path $installerDir "NetCDFViewer-linux-x86_64-$appVersion.deb"
 
 function Convert-ToWslPath([string]$windowsPath) {
     $resolvedPath = (Resolve-Path $windowsPath).Path

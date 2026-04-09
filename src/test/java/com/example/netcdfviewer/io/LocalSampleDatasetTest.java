@@ -4,10 +4,8 @@ import com.example.netcdfviewer.model.VariableInfo;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -17,10 +15,7 @@ class LocalSampleDatasetTest {
     @Test
     void atLeastOneLocalNcFileSupportsVisualization() throws IOException {
         NetcdfDatasetParser parser = new NetcdfDatasetParser();
-        List<Path> files = Files.list(Path.of("."))
-            .filter(path -> path.getFileName().toString().toLowerCase().endsWith(".nc"))
-            .sorted(Comparator.comparingLong(this::safeSize))
-            .toList();
+        List<Path> files = LocalSampleDatasetSupport.requireLocalNcFilesOrSkip(Path.of("."));
 
         List<String> diagnostics = new ArrayList<>();
 
@@ -51,10 +46,7 @@ class LocalSampleDatasetTest {
     @Test
     void reportWhetherLocalNcFileExposesLayeredScalarVariable() throws IOException {
         NetcdfDatasetParser parser = new NetcdfDatasetParser();
-        List<Path> files = Files.list(Path.of("."))
-            .filter(path -> path.getFileName().toString().toLowerCase().endsWith(".nc"))
-            .sorted(Comparator.comparingLong(this::safeSize))
-            .toList();
+        List<Path> files = LocalSampleDatasetSupport.requireLocalNcFilesOrSkip(Path.of("."));
 
         List<String> diagnostics = new ArrayList<>();
 
@@ -78,13 +70,5 @@ class LocalSampleDatasetTest {
         }
 
         System.out.println("No local layered scalar sample found. Diagnostics:\n" + String.join("\n", diagnostics));
-    }
-
-    private long safeSize(Path path) {
-        try {
-            return Files.size(path);
-        } catch (IOException exception) {
-            return Long.MAX_VALUE;
-        }
     }
 }

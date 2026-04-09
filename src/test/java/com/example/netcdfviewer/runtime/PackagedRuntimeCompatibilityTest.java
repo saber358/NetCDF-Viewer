@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PackagedRuntimeCompatibilityTest {
@@ -43,14 +44,16 @@ class PackagedRuntimeCompatibilityTest {
     }
 
     @Test
-    void packageScriptTargetsVersion102AndIconMetadata() throws Exception {
+    void packageScriptDerivesVersionFromPomAndPreservesIconMetadata() throws Exception {
         String script = Files.readString(Path.of("scripts", "package-exe.ps1"), StandardCharsets.UTF_8);
 
-        assertTrue(script.contains("netcdf-viewer-1.0.2.jar"));
-        assertTrue(script.contains("--app-version 1.0.2"));
+        assertTrue(script.contains("function Get-ProjectVersion"));
+        assertTrue(script.contains("function Get-ProjectArtifactId"));
+        assertTrue(script.contains("--app-version $appVersion"));
         assertTrue(script.contains("--vendor lwj"));
         assertTrue(script.contains("--icon"));
         assertTrue(script.contains("app-icon.ico"));
+        assertFalse(script.contains("1.0.2"));
     }
 
     private String m2(String... parts) {

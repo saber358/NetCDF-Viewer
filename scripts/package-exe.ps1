@@ -3,7 +3,34 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $projectRoot
 
-$jarName = "netcdf-viewer-1.0.2.jar"
+function Get-PomProject([string]$rootPath) {
+    $pomPath = Join-Path $rootPath "pom.xml"
+    if (-not (Test-Path $pomPath)) {
+        throw "pom.xml not found: $pomPath"
+    }
+    [xml]$pom = Get-Content -LiteralPath $pomPath
+    return $pom.project
+}
+
+function Get-ProjectVersion([string]$rootPath) {
+    $version = (Get-PomProject $rootPath).version
+    if ([string]::IsNullOrWhiteSpace($version)) {
+        throw "Project version is missing in pom.xml"
+    }
+    return $version.Trim()
+}
+
+function Get-ProjectArtifactId([string]$rootPath) {
+    $artifactId = (Get-PomProject $rootPath).artifactId
+    if ([string]::IsNullOrWhiteSpace($artifactId)) {
+        throw "Project artifactId is missing in pom.xml"
+    }
+    return $artifactId.Trim()
+}
+
+$appVersion = Get-ProjectVersion $projectRoot
+$artifactId = Get-ProjectArtifactId $projectRoot
+$jarName = "$artifactId-$appVersion.jar"
 $packageInput = Join-Path $projectRoot "target\package-input"
 $installerDir = Join-Path $projectRoot "target\installer"
 $runtimeLibDir = Join-Path $projectRoot "target\app\lib"
@@ -56,7 +83,7 @@ jpackage `
     --module-path $javafxModuleDir `
     --add-modules javafx.controls,javafx.swing,java.logging,java.naming,java.security.jgss,java.compiler,jdk.jfr,jdk.unsupported,jdk.unsupported.desktop `
     --vendor lwj `
-    --app-version 1.0.2 `
+    --app-version $appVersion `
     --icon $iconPath `
     --win-shortcut `
     --win-menu

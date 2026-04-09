@@ -3,7 +3,7 @@
 /target/**/*
 !/target/installer/
 /target/installer/*
-!/target/installer/NetCDFViewer-1.0.2.exe
+!/target/installer/NetCDFViewer-*.exe
 /out/
 
 # IDE and local tooling
