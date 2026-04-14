@@ -283,6 +283,70 @@ class MainControllerLoadFileTest {
     }
 
     @Test
+    void controllerInitializesWithBuiltInCoastlineOverlay() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Field overlayField = MainController.class.getDeclaredField("currentOverlay");
+                overlayField.setAccessible(true);
+                assertTrue(overlayField.get(controller) != null);
+                assertFalse(view.getClearCoastlineMenuItem().isDisable());
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void useBuiltInCoastlineRestoresOverlayAfterClear() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method clearCoastlineOverlay = MainController.class.getDeclaredMethod("clearCoastlineOverlay");
+                clearCoastlineOverlay.setAccessible(true);
+                clearCoastlineOverlay.invoke(controller);
+
+                Method useBuiltInCoastline = MainController.class.getDeclaredMethod("useBuiltInCoastline");
+                useBuiltInCoastline.setAccessible(true);
+                useBuiltInCoastline.invoke(controller);
+
+                Field overlayField = MainController.class.getDeclaredField("currentOverlay");
+                overlayField.setAccessible(true);
+                assertTrue(overlayField.get(controller) != null);
+                assertFalse(view.getClearCoastlineMenuItem().isDisable());
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
     void clickQueryUpdatesStatusBarAfterDatasetRender() throws Exception {
         CountDownLatch initLatch = new CountDownLatch(1);
         AtomicReference<Throwable> errorRef = new AtomicReference<>();

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,10 +21,16 @@ public final class GeoJsonOverlayLoader {
     }
 
     public static CoastlineOverlay load(Path path) throws IOException {
-        JsonNode root = OBJECT_MAPPER.readTree(path.toFile());
+        try (InputStream stream = java.nio.file.Files.newInputStream(path)) {
+            return load(stream, path.toAbsolutePath().normalize(), path.getFileName().toString());
+        }
+    }
+
+    public static CoastlineOverlay load(InputStream stream, Path syntheticPath, String displayName) throws IOException {
+        JsonNode root = OBJECT_MAPPER.readTree(stream);
         List<OverlayPath> paths = new ArrayList<>();
         collectGeometry(root, paths);
-        return new CoastlineOverlay(path.toAbsolutePath().normalize(), path.getFileName().toString(), paths);
+        return new CoastlineOverlay(syntheticPath, displayName, paths);
     }
 
     private static void collectGeometry(JsonNode node, List<OverlayPath> paths) {

@@ -4,6 +4,7 @@ import com.example.netcdfviewer.AppMetadata;
 import com.example.netcdfviewer.io.NetcdfDatasetParser;
 import com.example.netcdfviewer.io.ParsedDataset;
 import com.example.netcdfviewer.model.VariableInfo;
+import com.example.netcdfviewer.overlay.BuiltInCoastline;
 import com.example.netcdfviewer.overlay.CoastlineOverlay;
 import com.example.netcdfviewer.overlay.CoastlineOverlayLoader;
 import com.example.netcdfviewer.overlay.CoastlineOverlayRenderer;
@@ -97,6 +98,7 @@ public final class MainController {
         // 初始化已加载数据集列表。
         view.getDatasetList().setItems(loadedDatasets);
         view.getClearCoastlineMenuItem().setDisable(true);
+        view.getUseBuiltInCoastlineMenuItem().setDisable(false);
         // 设置常用快捷键。
         view.getOpenMenuItem().setAccelerator(KeyCombination.keyCombination("Shortcut+O"));
         view.getExportPngMenuItem().setAccelerator(KeyCombination.keyCombination("Shortcut+Shift+E"));
@@ -115,6 +117,8 @@ public final class MainController {
         view.getRemoveDatasetButton().setDisable(true);
         // 设置初始状态提示。
         setStatus("Ready to open NetCDF file.");
+        // 启动时默认启用内置海岸线。
+        initializeBuiltInCoastline();
 
         // 绑定画布尺寸变化监听。
         bindCanvasSize();
@@ -147,6 +151,7 @@ public final class MainController {
         view.getOpenButton().setOnAction(event -> openWithFileChooser());
         // 海岸线加载与清理菜单。
         view.getLoadCoastlineMenuItem().setOnAction(event -> openCoastlineWithFileChooser());
+        view.getUseBuiltInCoastlineMenuItem().setOnAction(event -> useBuiltInCoastline());
         view.getClearCoastlineMenuItem().setOnAction(event -> clearCoastlineOverlay());
         // 导出 PNG 菜单与按钮共用同一处理逻辑。
         view.getExportPngMenuItem().setOnAction(event -> exportPng());
@@ -293,6 +298,16 @@ public final class MainController {
         }
     }
 
+    private void initializeBuiltInCoastline() {
+        try {
+            currentOverlay = BuiltInCoastline.load();
+            view.getClearCoastlineMenuItem().setDisable(false);
+        } catch (IOException ignored) {
+            currentOverlay = null;
+            view.getClearCoastlineMenuItem().setDisable(true);
+        }
+    }
+
     private void loadFile(Path path) {
         // 空路径直接忽略。
         if (path == null) {
@@ -424,6 +439,17 @@ public final class MainController {
         view.getClearCoastlineMenuItem().setDisable(true);
         setStatus("Cleared coastline overlay.");
         redrawCurrentView();
+    }
+
+    private void useBuiltInCoastline() {
+        try {
+            currentOverlay = BuiltInCoastline.load();
+            view.getClearCoastlineMenuItem().setDisable(false);
+            setStatus("Using built-in coastline.");
+            redrawCurrentView();
+        } catch (IOException exception) {
+            showError("Built-in coastline failed", "Could not load the built-in coastline resource: " + exception.getMessage());
+        }
     }
 
     private void removeSelectedDataset() {
