@@ -9,6 +9,7 @@
 # IDE and local tooling
 /.idea/
 /.vscode/
+/.worktrees/
 /.jshell-prefs/
 *.iml
 *.ipr
