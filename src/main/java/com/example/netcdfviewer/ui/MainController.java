@@ -6,6 +6,7 @@ import com.example.netcdfviewer.io.ParsedDataset;
 import com.example.netcdfviewer.model.VariableInfo;
 import com.example.netcdfviewer.render.ColorMap;
 import com.example.netcdfviewer.render.ColorMaps;
+import com.example.netcdfviewer.render.MeshPointQuery;
 import com.example.netcdfviewer.render.RangeStats;
 import com.example.netcdfviewer.render.RenderMath;
 import com.example.netcdfviewer.render.TriangleImageRenderer;
@@ -57,10 +58,16 @@ public final class MainController {
     private VariableInfo currentVariable;
     // 鼠标拖拽起点。
     private Point2D dragAnchor;
+    // 鼠标点击起点，用于区分点击与拖拽。
+    private Point2D clickAnchor;
     // 最近一次打开或导出的目录。
     private Path lastDirectory = Paths.get(System.getProperty("user.home", "."));
     // 渲染序号，用于丢弃旧的后台渲染结果。
     private long renderSequence;
+    // 最近一次成功渲染的查询上下文。
+    private RenderQueryContext latestRenderQueryContext;
+    // 判定点击与拖拽的像素阈值。
+    private static final double CLICK_TOLERANCE = 4.0;
 
     public MainController(Stage stage, MainView view) {
         // 保存窗口和视图引用，供后续初始化和事件处理使用。
@@ -171,6 +178,7 @@ public final class MainController {
         view.getCanvasHost().setOnMousePressed(event -> {
             if (event.getButton() == MouseButton.PRIMARY) {
                 dragAnchor = new Point2D(event.getX(), event.getY());
+                clickAnchor = dragAnchor;
             }
         });
         view.getCanvasHost().setOnMouseDragged(event -> {
@@ -183,7 +191,16 @@ public final class MainController {
             dragAnchor = currentPoint;
             renderCurrentSelection();
         });
-        view.getCanvasHost().setOnMouseReleased(event -> dragAnchor = null);
+        view.getCanvasHost().setOnMouseReleased(event -> {
+            if (event.getButton() == MouseButton.PRIMARY && clickAnchor != null) {
+                Point2D releasePoint = new Point2D(event.getX(), event.getY());
+                if (releasePoint.distance(clickAnchor) <= CLICK_TOLERANCE) {
+                    queryAtScreenPoint(releasePoint.getX(), releasePoint.getY());
+                }
+            }
+            dragAnchor = null;
+            clickAnchor = null;
+        });
         view.getCanvasHost().setOnScroll(event -> {
             if (currentDataset == null || !currentDataset.hasMesh()) {
                 return;
@@ -246,6 +263,7 @@ public final class MainController {
         // 清空当前数据状态，准备装载新文件。
         currentDataset = null;
         currentVariable = null;
+        latestRenderQueryContext = null;
         view.getVariableList().getItems().clear();
         view.getDatasetLabel().setText(path.getFileName().toString());
         view.getCoordinateVariableLabel().setText("Coordinates: -");
@@ -441,6 +459,8 @@ public final class MainController {
             viewportState.ensureFitted(currentDataset.mesh(), canvas.getWidth(), canvas.getHeight());
             // 生成新的渲染序号，供后台任务结果校验使用。
             long requestId = ++renderSequence;
+            // 新一轮渲染开始时先清空旧的查询上下文，避免点击命中过期结果。
+            latestRenderQueryContext = null;
             // 显示渲染中提示。
             view.getOverlayLabel().setText("Rendering " + currentVariable.name() + " ...");
             view.getOverlayLabel().setVisible(true);
@@ -494,6 +514,16 @@ public final class MainController {
             canvas.getGraphicsContext2D().drawImage(renderTask.getValue(), 0, 0, canvas.getWidth(), canvas.getHeight());
             // 刷新右侧色条。
             view.getColorBarCanvas().render(colorMap, displayRange);
+            // 缓存当前成功渲染的查询上下文，供点击单点查询复用。
+            latestRenderQueryContext = new RenderQueryContext(
+                dataset,
+                variable,
+                layerIndex,
+                values.clone(),
+                variable.elementCentered(),
+                variable.fillValue(),
+                snapshot
+            );
             // 更新当前变量标签。
             view.getCurrentVariableLabel().setText("Variable: " + variable.name() + " " + variable.dimensionSummary());
             // 更新范围标签。
@@ -575,11 +605,62 @@ public final class MainController {
         // 更新并显示占位提示。
         view.getOverlayLabel().setText(message);
         view.getOverlayLabel().setVisible(true);
+        // 占位状态下清空最近一次可查询渲染上下文。
+        latestRenderQueryContext = null;
         // 占位状态下不允许导出。
         view.getExportButton().setDisable(true);
         view.getExportPngMenuItem().setDisable(true);
         // 同步更新窗口标题。
         updateWindowTitle();
+    }
+
+    private void queryAtScreenPoint(double screenX, double screenY) {
+        // 没有完成过可视化渲染时，不允许单点查询。
+        RenderQueryContext context = latestRenderQueryContext;
+        if (context == null) {
+            setStatus("Point query is not available until a render completes.");
+            return;
+        }
+
+        // 使用最近一次成功渲染的数据上下文执行点查询。
+        MeshPointQuery.Result result = MeshPointQuery.query(
+            context.dataset().mesh(),
+            context.values(),
+            context.snapshot(),
+            screenX,
+            screenY,
+            context.elementCentered(),
+            context.fillValue(),
+            context.layerIndex()
+        );
+
+        // 未命中网格时给出明确提示。
+        if (!result.hit() || result.reason() == MeshPointQuery.Reason.NO_HIT) {
+            setStatus("No mesh value at clicked location.");
+            return;
+        }
+        // 命中但当前值不可用时给出明确提示。
+        if (!result.hasValue()) {
+            setStatus("Clicked triangle contains no valid value.");
+            return;
+        }
+
+        // 构造单点查询结果文本。
+        StringBuilder text = new StringBuilder()
+            .append("Query ")
+            .append(context.variable().name());
+        if (context.variable().layered()) {
+            text.append(" layer ").append(result.layerIndex() + 1);
+        }
+        text.append(" at (")
+            .append(format(result.worldX()))
+            .append(", ")
+            .append(format(result.worldY()))
+            .append("): triangle #")
+            .append(result.triangleIndex())
+            .append(", value=")
+            .append(format(result.value()));
+        setStatus(text.toString());
     }
 
     private void exportPng() {
@@ -673,6 +754,17 @@ public final class MainController {
             }
         }
         stage.setTitle(title.toString());
+    }
+
+    private record RenderQueryContext(
+        ParsedDataset dataset,
+        VariableInfo variable,
+        int layerIndex,
+        double[] values,
+        boolean elementCentered,
+        Double fillValue,
+        ViewportState.Snapshot snapshot
+    ) {
     }
 
     private static final class VariableCell extends ListCell<VariableInfo> {
