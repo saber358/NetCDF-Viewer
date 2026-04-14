@@ -5,7 +5,7 @@
 
     <groupId>com.example</groupId>
     <artifactId>netcdf-viewer</artifactId>
-    <version>1.0.3</version>
+    <version>1.0.4</version>
     <name>NetCDF Viewer</name>
     <description>Desktop viewer for unstructured triangle NetCDF datasets</description>
 

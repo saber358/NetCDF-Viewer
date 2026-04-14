@@ -2,6 +2,17 @@
 
 本文件记录项目的主要版本变化。
 
+## 1.0.4
+
+- 新增 GeoJSON / shapefile 海岸线叠加，可作为参考边界覆盖到当前平面图之上
+- 海岸线叠加跟随当前视图缩放、平移和数据集切换一起刷新
+- 新增内置默认海岸线资源，程序启动后默认启用，无需用户手动加载文件
+- 新增 `Use Built-in Coastline` 菜单入口，可在清空或替换外部海岸线后恢复系统内置海岸线
+- 新增本地海岸线样例数据：`samples/coastline/ne_110m_coastline.geojson` 与 `samples/coastline/ne_110m_coastline.shp`
+- 新增真实海岸线样例解析回归测试，验证下载到本地的 GeoJSON 和 SHP 文件可被成功读取
+- 重新打包 Windows 安装程序，更新 `NetCDFViewer-1.0.4.exe`
+- 版本号升级到 `1.0.4`
+
 ## 1.0.3
 
 - 新增多数据集管理，支持在已加载一个 `.nc` 后继续追加加载其他 `.nc` 数据
