@@ -11,6 +11,7 @@ import com.example.netcdfviewer.render.RangeStats;
 import com.example.netcdfviewer.render.RenderMath;
 import com.example.netcdfviewer.render.TriangleImageRenderer;
 import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
 import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Point2D;
@@ -52,6 +53,8 @@ public final class MainController {
     private final ViewportState viewportState = new ViewportState();
     // 可用颜色表集合。
     private final Map<String, ColorMap> colorMaps = new LinkedHashMap<>();
+    // 已加载数据集集合。
+    private final ObservableList<LoadedDatasetItem> loadedDatasets = FXCollections.observableArrayList();
     // 当前已打开的数据集。
     private ParsedDataset currentDataset;
     // 当前选中的变量。
@@ -84,6 +87,8 @@ public final class MainController {
         // 初始化颜色表下拉框。
         view.getColorMapCombo().setItems(FXCollections.observableArrayList(colorMaps.keySet()));
         view.getColorMapCombo().getSelectionModel().select("Viridis");
+        // 初始化已加载数据集列表。
+        view.getDatasetList().setItems(loadedDatasets);
         // 设置常用快捷键。
         view.getOpenMenuItem().setAccelerator(KeyCombination.keyCombination("Shortcut+O"));
         view.getExportPngMenuItem().setAccelerator(KeyCombination.keyCombination("Shortcut+Shift+E"));
@@ -99,6 +104,7 @@ public final class MainController {
         view.getApplyRangeButton().setDisable(true);
         view.getMinField().setDisable(true);
         view.getMaxField().setDisable(true);
+        view.getRemoveDatasetButton().setDisable(true);
         // 设置初始状态提示。
         setStatus("Ready to open NetCDF file.");
 
@@ -153,6 +159,17 @@ public final class MainController {
             updateDepthControls();
             renderCurrentSelection();
         });
+        // 数据集选择变化时，切换当前活动数据集。
+        view.getDatasetList().getSelectionModel().selectedItemProperty().addListener((obs, oldValue, newValue) -> {
+            view.getRemoveDatasetButton().setDisable(newValue == null);
+            if (newValue != null) {
+                activateDataset(newValue);
+            } else if (loadedDatasets.isEmpty()) {
+                clearActiveDatasetState();
+            }
+        });
+        // 删除按钮删除当前选中数据集。
+        view.getRemoveDatasetButton().setOnAction(event -> removeSelectedDataset());
 
         // 当前变量支持分层时，层滑块变化会触发实时重绘。
         view.getDepthSlider().valueProperty().addListener((obs, oldValue, newValue) -> {
@@ -258,87 +275,161 @@ public final class MainController {
             return;
         }
 
+        Path normalizedPath = normalizePath(path);
+        // 同一路径重复添加时直接切换到已存在的数据集。
+        LoadedDatasetItem existing = findLoadedDataset(normalizedPath);
+        if (existing != null) {
+            view.getDatasetList().getSelectionModel().select(existing);
+            setStatus("Dataset already loaded. Switched to existing entry.");
+            return;
+        }
+
         // 记录最近目录，便于下次打开或导出时默认定位。
-        lastDirectory = path.toAbsolutePath().getParent();
-        // 清空当前数据状态，准备装载新文件。
-        currentDataset = null;
-        currentVariable = null;
-        latestRenderQueryContext = null;
-        view.getVariableList().getItems().clear();
-        view.getDatasetLabel().setText(path.getFileName().toString());
-        view.getCoordinateVariableLabel().setText("Coordinates: -");
-        view.getConnectivityVariableLabel().setText("Connectivity: -");
-        view.getVariableMetaLabel().setText("Variable details: loading...");
-        view.getSummaryArea().clear();
-        view.getAttributesArea().clear();
-        view.getWarningsArea().clear();
-        view.getExportButton().setDisable(true);
-        view.getExportPngMenuItem().setDisable(true);
-        view.getVisualizeButton().setDisable(true);
-        // 新文件加载前先重置视口。
-        viewportState.reset();
-        // 显示加载中的占位信息。
-        renderPlaceholder("Loading " + path.getFileName() + " ...");
-        setStatus("Loading " + path.getFileName() + " ...");
-        updateWindowTitle();
+        lastDirectory = normalizedPath.getParent();
+        // 如果当前还没有任何数据集，则显示加载中的占位提示。
+        if (loadedDatasets.isEmpty()) {
+            renderPlaceholder("Loading " + normalizedPath.getFileName() + " ...");
+        }
+        setStatus("Loading " + normalizedPath.getFileName() + " ...");
 
         // 使用后台任务读取文件，避免卡住界面线程。
         Task<ParsedDataset> loadTask = new Task<>() {
             @Override
             protected ParsedDataset call() throws Exception {
-                return parser.open(path);
+                return parser.open(normalizedPath);
             }
         };
 
         // 读取成功后刷新界面。
-        loadTask.setOnSucceeded(event -> applyLoadedDataset(path, loadTask.getValue()));
+        loadTask.setOnSucceeded(event -> addLoadedDataset(normalizedPath, loadTask.getValue()));
         // 读取失败时显示错误并回到占位状态。
         loadTask.setOnFailed(event -> {
             Throwable error = loadTask.getException();
-            showError("Open failed", "Could not parse " + path.getFileName() + ": " + (error == null ? "unknown error" : error.getMessage()));
-            renderPlaceholder("Failed to load " + path.getFileName() + ".");
+            showError("Open failed", "Could not parse " + normalizedPath.getFileName() + ": " + (error == null ? "unknown error" : error.getMessage()));
+            if (loadedDatasets.isEmpty()) {
+                renderPlaceholder("Failed to load " + normalizedPath.getFileName() + ".");
+            }
         });
 
         // 启动后台读取线程。
-        Thread worker = new Thread(loadTask, "netcdf-load-" + path.getFileName());
+        Thread worker = new Thread(loadTask, "netcdf-load-" + normalizedPath.getFileName());
         worker.setDaemon(true);
         worker.start();
     }
 
-    private void applyLoadedDataset(Path path, ParsedDataset dataset) {
-        // 保存当前数据集引用。
-        currentDataset = dataset;
-        currentVariable = null;
-        // 更新摘要、属性和警告面板。
-        updateDatasetPanels(dataset);
-        // 将所有变量加载到变量列表中。
-        view.getVariableList().setItems(FXCollections.observableArrayList(dataset.variables()));
-        // 优先选中第一个可绘制变量，提升首次打开体验。
-        VariableInfo preferredVariable = dataset.plottableVariables().stream().findFirst().orElse(null);
-        if (preferredVariable != null) {
-            view.getVariableList().getSelectionModel().select(preferredVariable);
-        } else if (!dataset.variables().isEmpty()) {
-            // 没有可绘制变量时，退而选中第一个变量供查看信息。
-            view.getVariableList().getSelectionModel().select(0);
-        } else {
-            // 文件中没有任何变量时显示明确提示。
-            updateVariableMeta();
-            renderPlaceholder("The file contains no variables.");
+    private void addLoadedDataset(Path path, ParsedDataset dataset) {
+        // 在后台加载完成前后都要再次检查是否已存在相同路径，避免重复项。
+        LoadedDatasetItem existing = findLoadedDataset(path);
+        if (existing != null) {
+            view.getDatasetList().getSelectionModel().select(existing);
+            setStatus("Dataset already loaded. Switched to existing entry.");
+            return;
         }
-        // 更新标题与状态栏。
-        updateWindowTitle();
+        LoadedDatasetItem item = new LoadedDatasetItem(path, path.getFileName().toString(), dataset);
+        loadedDatasets.add(item);
+        view.getDatasetList().getSelectionModel().select(item);
         setStatus("Loaded " + path.getFileName());
     }
 
     private void openFile(Path path) {
         try {
-            lastDirectory = path.toAbsolutePath().getParent();
-            ParsedDataset dataset = parser.open(path);
-            viewportState.reset();
-            applyLoadedDataset(path, dataset);
+            Path normalizedPath = normalizePath(path);
+            LoadedDatasetItem existing = findLoadedDataset(normalizedPath);
+            if (existing != null) {
+                view.getDatasetList().getSelectionModel().select(existing);
+                setStatus("Dataset already loaded. Switched to existing entry.");
+                return;
+            }
+            lastDirectory = normalizedPath.getParent();
+            ParsedDataset dataset = parser.open(normalizedPath);
+            addLoadedDataset(normalizedPath, dataset);
         } catch (Exception exception) {
             showError("Open failed", "Could not parse " + path.getFileName() + ": " + exception.getMessage());
         }
+    }
+
+    private void activateDataset(LoadedDatasetItem item) {
+        // 切换活动数据集时先重置与当前渲染相关的瞬时状态。
+        currentDataset = item.dataset();
+        currentVariable = null;
+        latestRenderQueryContext = null;
+        viewportState.reset();
+        // 更新摘要、属性和警告面板。
+        updateDatasetPanels(item.dataset());
+        // 将该数据集的变量加载到变量列表中。
+        view.getVariableList().setItems(FXCollections.observableArrayList(item.dataset().variables()));
+        view.getCurrentVariableLabel().setText("Variable: -");
+        view.getRangeInfoLabel().setText("Range: -");
+        view.getLayerInfoLabel().setText("Layer: -");
+        // 优先选中第一个可绘制变量，提升切换体验。
+        VariableInfo preferredVariable = item.dataset().plottableVariables().stream().findFirst().orElse(null);
+        if (preferredVariable != null) {
+            view.getVariableList().getSelectionModel().select(preferredVariable);
+        } else if (!item.dataset().variables().isEmpty()) {
+            view.getVariableList().getSelectionModel().select(0);
+            renderPlaceholder("This dataset contains no plottable triangle variable.");
+        } else {
+            updateVariableMeta();
+            renderPlaceholder("The file contains no variables.");
+        }
+        updateWindowTitle();
+    }
+
+    private void removeSelectedDataset() {
+        LoadedDatasetItem selected = view.getDatasetList().getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            setStatus("No dataset selected to remove.");
+            return;
+        }
+
+        int selectedIndex = view.getDatasetList().getSelectionModel().getSelectedIndex();
+        loadedDatasets.remove(selected);
+
+        if (loadedDatasets.isEmpty()) {
+            clearActiveDatasetState();
+            setStatus("Removed " + selected.displayName());
+            return;
+        }
+
+        int fallbackIndex = Math.min(selectedIndex, loadedDatasets.size() - 1);
+        view.getDatasetList().getSelectionModel().select(fallbackIndex);
+        setStatus("Removed " + selected.displayName());
+    }
+
+    private void clearActiveDatasetState() {
+        currentDataset = null;
+        currentVariable = null;
+        latestRenderQueryContext = null;
+        view.getVariableList().getItems().clear();
+        view.getDatasetLabel().setText("No file loaded");
+        view.getCoordinateVariableLabel().setText("Coordinates: -");
+        view.getConnectivityVariableLabel().setText("Connectivity: -");
+        view.getVariableMetaLabel().setText("Variable details: -");
+        view.getCurrentVariableLabel().setText("Variable: -");
+        view.getLayerInfoLabel().setText("Layer: -");
+        view.getRangeInfoLabel().setText("Range: -");
+        view.getSummaryArea().clear();
+        view.getAttributesArea().clear();
+        view.getWarningsArea().clear();
+        view.getDepthSlider().setDisable(true);
+        view.getDepthSlider().setValue(0);
+        view.getVisualizeButton().setDisable(true);
+        view.getApplyRangeButton().setDisable(true);
+        view.getMinField().setDisable(true);
+        view.getMaxField().setDisable(true);
+        renderPlaceholder("Open a NetCDF file to begin.");
+        updateWindowTitle();
+    }
+
+    private LoadedDatasetItem findLoadedDataset(Path path) {
+        return loadedDatasets.stream()
+            .filter(item -> item.sourcePath().equals(path))
+            .findFirst()
+            .orElse(null);
+    }
+
+    private Path normalizePath(Path path) {
+        return path.toAbsolutePath().normalize();
     }
 
     private void updateDatasetPanels(ParsedDataset dataset) {

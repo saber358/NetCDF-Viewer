@@ -73,6 +73,106 @@ class MainControllerLoadFileTest {
     }
 
     @Test
+    void loadingAdditionalDatasetAddsSecondDatasetEntryAndAllowsSwitching() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, Path.of("ydw.nc"));
+                openFile.invoke(controller, Path.of("HBHQY.nc"));
+
+                assertEquals(2, view.getDatasetList().getItems().size());
+                assertTrue(view.getDatasetLabel().getText().contains("HBHQY.nc"));
+
+                view.getDatasetList().getSelectionModel().select(0);
+
+                assertTrue(view.getDatasetLabel().getText().contains("ydw.nc"));
+                assertFalse(view.getVariableList().getItems().isEmpty());
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void removingActiveDatasetFallsBackToRemainingDataset() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, Path.of("ydw.nc"));
+                openFile.invoke(controller, Path.of("HBHQY.nc"));
+
+                view.getRemoveDatasetButton().fire();
+
+                assertEquals(1, view.getDatasetList().getItems().size());
+                assertTrue(view.getDatasetLabel().getText().contains("ydw.nc"));
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void reopeningSameDatasetDoesNotCreateDuplicateEntry() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, Path.of("ydw.nc"));
+                openFile.invoke(controller, Path.of("ydw.nc"));
+
+                assertEquals(1, view.getDatasetList().getItems().size());
+                assertTrue(view.getStatusLabel().getText().contains("already loaded"));
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
     void clickQueryUpdatesStatusBarAfterDatasetRender() throws Exception {
         CountDownLatch initLatch = new CountDownLatch(1);
         AtomicReference<Throwable> errorRef = new AtomicReference<>();

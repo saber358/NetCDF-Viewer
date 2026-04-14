@@ -54,6 +54,10 @@ public final class MainView extends BorderPane {
     private final Button visualizeButton = new Button("Visualize");
     // 手动应用范围按钮。
     private final Button applyRangeButton = new Button("Apply Range");
+    // 删除当前选中数据集按钮。
+    private final Button removeDatasetButton = new Button("Remove");
+    // 已加载数据集列表。
+    private final ListView<LoadedDatasetItem> datasetList = new ListView<>();
     // 变量列表。
     private final ListView<VariableInfo> variableList = new ListView<>();
     // 数据摘要区域。
@@ -129,6 +133,8 @@ public final class MainView extends BorderPane {
         configureTextArea(attributesArea);
         configureTextArea(warningsArea);
 
+        datasetList.setPlaceholder(new Label("No datasets"));
+        datasetList.setPrefHeight(120);
         variableList.setPlaceholder(new Label("No variables"));
         variableList.setPrefHeight(260);
 
@@ -140,9 +146,12 @@ public final class MainView extends BorderPane {
         );
         VBox.setVgrow(leftTabs, Priority.ALWAYS);
 
+        Label datasetListLabel = new Label("Loaded Datasets");
+        HBox datasetHeader = new HBox(8, datasetListLabel, removeDatasetButton);
+        datasetHeader.setAlignment(Pos.CENTER_LEFT);
         Label variableListLabel = new Label("Variables");
         // 左侧面板由变量列表和信息标签页组成。
-        VBox leftPanel = new VBox(8, variableListLabel, variableList, leftTabs);
+        VBox leftPanel = new VBox(8, datasetHeader, datasetList, variableListLabel, variableList, leftTabs);
         leftPanel.setPadding(new Insets(12));
         leftPanel.setPrefWidth(330);
 
@@ -280,6 +289,14 @@ public final class MainView extends BorderPane {
 
     public Button getApplyRangeButton() {
         return applyRangeButton;
+    }
+
+    public Button getRemoveDatasetButton() {
+        return removeDatasetButton;
+    }
+
+    public ListView<LoadedDatasetItem> getDatasetList() {
+        return datasetList;
     }
 
     public ListView<VariableInfo> getVariableList() {
