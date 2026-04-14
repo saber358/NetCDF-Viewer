@@ -109,6 +109,16 @@ public final class ViewportState {
         return translateY - worldY * scale;
     }
 
+    public double worldX(double screenX) {
+        // 将屏幕坐标 X 反算为世界坐标 X。
+        return (screenX - translateX) / scale;
+    }
+
+    public double worldY(double screenY) {
+        // 将屏幕坐标 Y 反算为世界坐标 Y。
+        return (translateY - screenY) / scale;
+    }
+
     public Snapshot snapshot() {
         // 生成当前视口快照，供后台线程安全使用。
         return new Snapshot(scale, translateX, translateY);
@@ -123,6 +133,16 @@ public final class ViewportState {
         public double screenY(double worldY) {
             // 使用快照中的缩放和平移参数计算屏幕 Y 坐标。
             return translateY - worldY * scale;
+        }
+
+        public double worldX(double screenX) {
+            // 使用快照中的缩放和平移参数计算世界 X 坐标。
+            return (screenX - translateX) / scale;
+        }
+
+        public double worldY(double screenY) {
+            // 使用快照中的缩放和平移参数计算世界 Y 坐标。
+            return (translateY - screenY) / scale;
         }
     }
 }
