@@ -4,6 +4,9 @@ import com.example.netcdfviewer.AppMetadata;
 import com.example.netcdfviewer.io.NetcdfDatasetParser;
 import com.example.netcdfviewer.io.ParsedDataset;
 import com.example.netcdfviewer.model.VariableInfo;
+import com.example.netcdfviewer.overlay.CoastlineOverlay;
+import com.example.netcdfviewer.overlay.CoastlineOverlayLoader;
+import com.example.netcdfviewer.overlay.CoastlineOverlayRenderer;
 import com.example.netcdfviewer.render.ColorMap;
 import com.example.netcdfviewer.render.ColorMaps;
 import com.example.netcdfviewer.render.MeshPointQuery;
@@ -49,6 +52,8 @@ public final class MainController {
     private final NetcdfDatasetParser parser = new NetcdfDatasetParser();
     // 后台离屏渲染器。
     private final TriangleImageRenderer imageRenderer = new TriangleImageRenderer();
+    // 海岸线叠加绘制器。
+    private final CoastlineOverlayRenderer coastlineOverlayRenderer = new CoastlineOverlayRenderer();
     // 当前视口状态，包含缩放和平移信息。
     private final ViewportState viewportState = new ViewportState();
     // 可用颜色表集合。
@@ -69,6 +74,8 @@ public final class MainController {
     private long renderSequence;
     // 最近一次成功渲染的查询上下文。
     private RenderQueryContext latestRenderQueryContext;
+    // 当前海岸线叠加层。
+    private CoastlineOverlay currentOverlay;
     // 判定点击与拖拽的像素阈值。
     private static final double CLICK_TOLERANCE = 4.0;
 
@@ -89,6 +96,7 @@ public final class MainController {
         view.getColorMapCombo().getSelectionModel().select("Viridis");
         // 初始化已加载数据集列表。
         view.getDatasetList().setItems(loadedDatasets);
+        view.getClearCoastlineMenuItem().setDisable(true);
         // 设置常用快捷键。
         view.getOpenMenuItem().setAccelerator(KeyCombination.keyCombination("Shortcut+O"));
         view.getExportPngMenuItem().setAccelerator(KeyCombination.keyCombination("Shortcut+Shift+E"));
@@ -137,6 +145,9 @@ public final class MainController {
         // 打开文件菜单与按钮共用同一处理逻辑。
         view.getOpenMenuItem().setOnAction(event -> openWithFileChooser());
         view.getOpenButton().setOnAction(event -> openWithFileChooser());
+        // 海岸线加载与清理菜单。
+        view.getLoadCoastlineMenuItem().setOnAction(event -> openCoastlineWithFileChooser());
+        view.getClearCoastlineMenuItem().setOnAction(event -> clearCoastlineOverlay());
         // 导出 PNG 菜单与按钮共用同一处理逻辑。
         view.getExportPngMenuItem().setOnAction(event -> exportPng());
         view.getExportButton().setOnAction(event -> exportPng());
@@ -269,6 +280,19 @@ public final class MainController {
         }
     }
 
+    private void openCoastlineWithFileChooser() {
+        try {
+            Path path = SwingFileDialogs.chooseOpenCoastlineFile(lastDirectory);
+            if (path != null) {
+                loadCoastline(path);
+            } else {
+                setStatus("Load coastline canceled.");
+            }
+        } catch (Exception exception) {
+            showError("Load coastline failed", "Could not open the coastline file chooser: " + exception.getMessage());
+        }
+    }
+
     private void loadFile(Path path) {
         // 空路径直接忽略。
         if (path == null) {
@@ -373,6 +397,33 @@ public final class MainController {
             renderPlaceholder("The file contains no variables.");
         }
         updateWindowTitle();
+    }
+
+    private void loadCoastline(Path path) {
+        if (path == null) {
+            return;
+        }
+        try {
+            Path normalizedPath = path.toAbsolutePath().normalize();
+            lastDirectory = normalizedPath.getParent();
+            CoastlineOverlay overlay = CoastlineOverlayLoader.load(normalizedPath);
+            if (overlay.paths().isEmpty()) {
+                throw new IOException("The coastline file does not contain supported line or polygon geometry.");
+            }
+            currentOverlay = overlay;
+            view.getClearCoastlineMenuItem().setDisable(false);
+            setStatus("Loaded coastline " + overlay.displayName() + " (" + overlay.paths().size() + " paths)");
+            redrawCurrentView();
+        } catch (IOException exception) {
+            showError("Load coastline failed", "Could not parse coastline overlay: " + exception.getMessage());
+        }
+    }
+
+    private void clearCoastlineOverlay() {
+        currentOverlay = null;
+        view.getClearCoastlineMenuItem().setDisable(true);
+        setStatus("Cleared coastline overlay.");
+        redrawCurrentView();
     }
 
     private void removeSelectedDataset() {
@@ -603,6 +654,8 @@ public final class MainController {
             canvas.getGraphicsContext2D().clearRect(0, 0, canvas.getWidth(), canvas.getHeight());
             // 绘制新的离屏结果。
             canvas.getGraphicsContext2D().drawImage(renderTask.getValue(), 0, 0, canvas.getWidth(), canvas.getHeight());
+            // 在主图之上绘制海岸线叠加层。
+            coastlineOverlayRenderer.render(canvas.getGraphicsContext2D(), currentOverlay, snapshot);
             // 刷新右侧色条。
             view.getColorBarCanvas().render(colorMap, displayRange);
             // 缓存当前成功渲染的查询上下文，供点击单点查询复用。
@@ -775,6 +828,20 @@ public final class MainController {
         } catch (Exception exception) {
             // 保存对话框或其他异常统一提示。
             showError("Export failed", "Could not open the save dialog: " + exception.getMessage());
+        }
+    }
+
+    private void redrawCurrentView() {
+        if (currentDataset != null && currentVariable != null && currentVariable.plottable()) {
+            renderCurrentSelection();
+            return;
+        }
+        if (latestRenderQueryContext != null && currentOverlay != null) {
+            coastlineOverlayRenderer.render(
+                view.getRenderCanvas().getGraphicsContext2D(),
+                currentOverlay,
+                latestRenderQueryContext.snapshot()
+            );
         }
     }
 

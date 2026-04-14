@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -167,6 +168,115 @@ class MainControllerLoadFileTest {
         });
 
         assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void loadingCoastlineOverlayStoresOverlayState() throws Exception {
+        Path overlayFile = createGeoJsonOverlayFile();
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method loadCoastline = MainController.class.getDeclaredMethod("loadCoastline", Path.class);
+                loadCoastline.setAccessible(true);
+                loadCoastline.invoke(controller, overlayFile);
+
+                Field overlayField = MainController.class.getDeclaredField("currentOverlay");
+                overlayField.setAccessible(true);
+                assertTrue(overlayField.get(controller) != null);
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        Files.deleteIfExists(overlayFile);
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void switchingDatasetsPreservesCoastlineOverlayState() throws Exception {
+        Path overlayFile = createGeoJsonOverlayFile();
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, Path.of("ydw.nc"));
+
+                Method loadCoastline = MainController.class.getDeclaredMethod("loadCoastline", Path.class);
+                loadCoastline.setAccessible(true);
+                loadCoastline.invoke(controller, overlayFile);
+
+                openFile.invoke(controller, Path.of("HBHQY.nc"));
+
+                Field overlayField = MainController.class.getDeclaredField("currentOverlay");
+                overlayField.setAccessible(true);
+                assertTrue(overlayField.get(controller) != null);
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        Files.deleteIfExists(overlayFile);
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void clearingCoastlineOverlayResetsOverlayState() throws Exception {
+        Path overlayFile = createGeoJsonOverlayFile();
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method loadCoastline = MainController.class.getDeclaredMethod("loadCoastline", Path.class);
+                loadCoastline.setAccessible(true);
+                loadCoastline.invoke(controller, overlayFile);
+
+                Method clearCoastlineOverlay = MainController.class.getDeclaredMethod("clearCoastlineOverlay");
+                clearCoastlineOverlay.setAccessible(true);
+                clearCoastlineOverlay.invoke(controller);
+
+                Field overlayField = MainController.class.getDeclaredField("currentOverlay");
+                overlayField.setAccessible(true);
+                assertEquals(null, overlayField.get(controller));
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        Files.deleteIfExists(overlayFile);
         if (errorRef.get() != null) {
             throw new AssertionError(errorRef.get());
         }
@@ -464,5 +574,16 @@ class MainControllerLoadFileTest {
     @FunctionalInterface
     private interface StatusPredicate {
         boolean matches(String text);
+    }
+
+    private static Path createGeoJsonOverlayFile() throws Exception {
+        Path file = Files.createTempFile("coastline-overlay-", ".geojson");
+        Files.writeString(file, """
+            {
+              "type": "LineString",
+              "coordinates": [[120.0, 30.0], [121.0, 31.0]]
+            }
+            """);
+        return file;
     }
 }

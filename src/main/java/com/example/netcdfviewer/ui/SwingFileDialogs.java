@@ -54,6 +54,23 @@ public final class SwingFileDialogs {
         return chooser;
     }
 
+    static JFileChooser createOpenCoastlineChooser(Path initialDirectory) {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Load Coastline Overlay");
+        chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+        chooser.setAcceptAllFileFilterUsed(false);
+        chooser.setFileFilter(new FileNameExtensionFilter(
+            "Coastline files (*.geojson, *.json, *.shp)",
+            "geojson",
+            "json",
+            "shp"
+        ));
+        if (initialDirectory != null && Files.isDirectory(initialDirectory)) {
+            chooser.setCurrentDirectory(initialDirectory.toFile());
+        }
+        return chooser;
+    }
+
     public static Path chooseOpenFile(Path initialDirectory) {
         // 统一在 Swing EDT 线程中弹出打开文件对话框。
         return invokeOnEdt(() -> {
@@ -85,6 +102,17 @@ public final class SwingFileDialogs {
                 file = new File(path + ".png");
             }
             return file.toPath();
+        });
+    }
+
+    public static Path chooseOpenCoastlineFile(Path initialDirectory) {
+        return invokeOnEdt(() -> {
+            JFileChooser chooser = createOpenCoastlineChooser(initialDirectory);
+            int result = chooser.showOpenDialog(null);
+            if (result != JFileChooser.APPROVE_OPTION || chooser.getSelectedFile() == null) {
+                return null;
+            }
+            return chooser.getSelectedFile().toPath();
         });
     }
 

@@ -38,6 +38,10 @@ public final class MainView extends BorderPane {
     private final Menu helpMenu = new Menu("Help");
     // 打开文件菜单项。
     private final MenuItem openMenuItem = new MenuItem("Open...");
+    // 加载海岸线菜单项。
+    private final MenuItem loadCoastlineMenuItem = new MenuItem("Load Coastline...");
+    // 清空海岸线菜单项。
+    private final MenuItem clearCoastlineMenuItem = new MenuItem("Clear Coastline");
     // 导出 PNG 菜单项。
     private final MenuItem exportPngMenuItem = new MenuItem("Export PNG...");
     // 退出菜单项。
@@ -116,7 +120,7 @@ public final class MainView extends BorderPane {
 
         // 创建文件菜单并挂载常用文件操作。
         Menu fileMenu = new Menu("File");
-        fileMenu.getItems().addAll(openMenuItem, exportPngMenuItem, exitMenuItem);
+        fileMenu.getItems().addAll(openMenuItem, loadCoastlineMenuItem, clearCoastlineMenuItem, exportPngMenuItem, exitMenuItem);
         // 将关于菜单项加入帮助菜单。
         helpMenu.getItems().add(aboutMenuItem);
         // 顶部菜单栏同时显示文件菜单和帮助菜单。
@@ -257,6 +261,14 @@ public final class MainView extends BorderPane {
 
     public MenuItem getExportPngMenuItem() {
         return exportPngMenuItem;
+    }
+
+    public MenuItem getLoadCoastlineMenuItem() {
+        return loadCoastlineMenuItem;
+    }
+
+    public MenuItem getClearCoastlineMenuItem() {
+        return clearCoastlineMenuItem;
     }
 
     public MenuItem getExitMenuItem() {
