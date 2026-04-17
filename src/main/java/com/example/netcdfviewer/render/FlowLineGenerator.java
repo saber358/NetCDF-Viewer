@@ -13,10 +13,11 @@ import java.util.logging.Logger;
 public final class FlowLineGenerator {
     static final int SEED_SPACING = 24;
     static final int OCCUPANCY_CELL_SIZE = 12;
-    static final double STEP_PIXELS = 10.0;
+    static final double STEP_PIXELS = 6.0;
     static final double MIN_SPEED = 1e-9;
-    static final int MAX_STEPS_PER_DIRECTION = 28;
+    static final int MAX_STEPS_PER_DIRECTION = 42;
     static final double MIN_LINE_LENGTH = 18.0;
+    static final int SMOOTHING_PASSES = 2;
     private static final double VIEWPORT_MARGIN = 8.0;
     private static final Logger logger = Logger.getLogger(FlowLineGenerator.class.getName());
 
@@ -196,7 +197,9 @@ public final class FlowLineGenerator {
             return null;
         }
 
-        FlowLine line = FlowLine.fromPoints(points);
+        // 2.4 对折线做一次轻量平滑，减少三角网采样带来的折拐感。
+        List<FlowPoint> smoothedPoints = smoothPoints(points);
+        FlowLine line = FlowLine.fromPoints(smoothedPoints);
         if (logger.isLoggable(Level.FINE)) {
             logger.fine("种子流线构造结束, pointCount=" + line.points().size() + ", totalLength=" + line.totalLength());
         }
@@ -289,7 +292,50 @@ public final class FlowLineGenerator {
 
     /*
      * ========================================================================
-     * 步骤4：读写种子占用网格
+     * 步骤4：平滑流线点列
+     * ========================================================================
+     * 目标：
+     *   1) 用轻量级角切算法压掉折线拐点
+     * 操作要点：
+     *   1) 保留首尾点
+     *   2) 中间点做 2 次 Chaikin 平滑
+     */
+    List<FlowPoint> smoothPoints(List<FlowPoint> source) {
+        // 4.1 点数太少时直接返回原始点列。
+        if (source == null || source.size() < 3) {
+            return source == null ? List.of() : List.copyOf(source);
+        }
+
+        // 4.2 连续执行固定次数的平滑迭代，保留首尾点。
+        List<FlowPoint> current = List.copyOf(source);
+        for (int pass = 0; pass < SMOOTHING_PASSES; pass++) {
+            List<FlowPoint> next = new ArrayList<>(current.size() * 2);
+            next.add(current.get(0));
+            for (int index = 0; index < current.size() - 1; index++) {
+                FlowPoint start = current.get(index);
+                FlowPoint end = current.get(index + 1);
+                if (index > 0) {
+                    next.add(new FlowPoint(
+                        start.x() * 0.75 + end.x() * 0.25,
+                        start.y() * 0.75 + end.y() * 0.25
+                    ));
+                }
+                if (index < current.size() - 2) {
+                    next.add(new FlowPoint(
+                        start.x() * 0.25 + end.x() * 0.75,
+                        start.y() * 0.25 + end.y() * 0.75
+                    ));
+                }
+            }
+            next.add(current.get(current.size() - 1));
+            current = next;
+        }
+        return current;
+    }
+
+    /*
+     * ========================================================================
+     * 步骤5：读写种子占用网格
      * ========================================================================
      * 目标：
      *   1) 将已经接受的流线投影到简化屏幕网格

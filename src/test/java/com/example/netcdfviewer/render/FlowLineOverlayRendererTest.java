@@ -13,6 +13,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -26,10 +27,43 @@ class FlowLineOverlayRendererTest {
     }
 
     @Test
-    void renderPaintsVisiblePixelsForFlowLineBody() {
+    void buildStrokeRangesCreatesLocalizedBlackBrushStrokes() {
+        FlowLineGenerator.FlowLine line = FlowLineGenerator.FlowLine.fromPoints(List.of(
+            new FlowLineGenerator.FlowPoint(10.0, 20.0),
+            new FlowLineGenerator.FlowPoint(110.0, 20.0)
+        ));
+
+        List<FlowLineOverlayRenderer.StrokeRange> ranges = renderer.buildStrokeRanges(line, 0.0);
+        double paintedLength = ranges.stream()
+            .mapToDouble(range -> range.endLength() - range.startLength())
+            .sum();
+
+        assertFalse(ranges.isEmpty());
+        assertTrue(ranges.stream().allMatch(range -> range.endLength() > range.startLength()));
+        assertTrue(paintedLength < line.totalLength() * 0.70);
+    }
+
+    @Test
+    void buildStrokeRangesMoveForwardWhenPhaseChanges() {
+        FlowLineGenerator.FlowLine line = FlowLineGenerator.FlowLine.fromPoints(List.of(
+            new FlowLineGenerator.FlowPoint(10.0, 20.0),
+            new FlowLineGenerator.FlowPoint(110.0, 20.0)
+        ));
+
+        List<FlowLineOverlayRenderer.StrokeRange> phaseZero = renderer.buildStrokeRanges(line, 0.0);
+        List<FlowLineOverlayRenderer.StrokeRange> phaseLater = renderer.buildStrokeRanges(line, 0.35);
+
+        assertNotEquals(phaseZero, phaseLater);
+        assertTrue(phaseLater.get(0).startLength() > phaseZero.get(0).startLength());
+    }
+
+    @Test
+    void renderPaintsSeparatedBlackBrushStrokesInsteadOfWholeBody() {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<Throwable> errorRef = new AtomicReference<>();
-        AtomicReference<Color> colorRef = new AtomicReference<>();
+        AtomicReference<Color> headRef = new AtomicReference<>();
+        AtomicReference<Color> gapRef = new AtomicReference<>();
+        AtomicReference<Color> tailRef = new AtomicReference<>();
 
         Platform.runLater(() -> {
             try {
@@ -40,7 +74,10 @@ class FlowLineOverlayRendererTest {
                 ));
 
                 renderer.render(canvas.getGraphicsContext2D(), List.of(line), 0.0);
-                colorRef.set(canvas.snapshot(new SnapshotParameters(), null).getPixelReader().getColor(20, 20));
+                var reader = canvas.snapshot(new SnapshotParameters(), null).getPixelReader();
+                headRef.set(reader.getColor(20, 20));
+                gapRef.set(reader.getColor(35, 20));
+                tailRef.set(reader.getColor(94, 20));
             } catch (Throwable throwable) {
                 errorRef.set(throwable);
             } finally {
@@ -52,17 +89,19 @@ class FlowLineOverlayRendererTest {
         if (errorRef.get() != null) {
             throw new AssertionError(errorRef.get());
         }
-        assertTrue(colorRef.get().getOpacity() > 0.0);
+        assertTrue(headRef.get().getBrightness() < 0.2);
+        assertTrue(gapRef.get().getBrightness() > 0.95);
+        assertTrue(tailRef.get().getBrightness() < 0.2);
     }
 
     @Test
-    void renderMovesHighlightBandWhenPhaseChanges() {
+    void renderMovesBlackBrushStrokesWhenPhaseChanges() {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<Throwable> errorRef = new AtomicReference<>();
-        AtomicReference<Color> earlyAtPhaseZeroRef = new AtomicReference<>();
-        AtomicReference<Color> lateAtPhaseZeroRef = new AtomicReference<>();
-        AtomicReference<Color> earlyAtPhaseLateRef = new AtomicReference<>();
-        AtomicReference<Color> lateAtPhaseLateRef = new AtomicReference<>();
+        AtomicReference<Color> phaseZeroMidRef = new AtomicReference<>();
+        AtomicReference<Color> phaseZeroTailRef = new AtomicReference<>();
+        AtomicReference<Color> phaseLaterMidRef = new AtomicReference<>();
+        AtomicReference<Color> phaseLaterTailRef = new AtomicReference<>();
 
         Platform.runLater(() -> {
             try {
@@ -73,13 +112,15 @@ class FlowLineOverlayRendererTest {
 
                 Canvas phaseZeroCanvas = new Canvas(120, 40);
                 renderer.render(phaseZeroCanvas.getGraphicsContext2D(), List.of(line), 0.0);
-                earlyAtPhaseZeroRef.set(phaseZeroCanvas.snapshot(new SnapshotParameters(), null).getPixelReader().getColor(12, 20));
-                lateAtPhaseZeroRef.set(phaseZeroCanvas.snapshot(new SnapshotParameters(), null).getPixelReader().getColor(90, 20));
+                var phaseZeroReader = phaseZeroCanvas.snapshot(new SnapshotParameters(), null).getPixelReader();
+                phaseZeroMidRef.set(phaseZeroReader.getColor(35, 20));
+                phaseZeroTailRef.set(phaseZeroReader.getColor(94, 20));
 
                 Canvas phaseLateCanvas = new Canvas(120, 40);
-                renderer.render(phaseLateCanvas.getGraphicsContext2D(), List.of(line), 0.8);
-                earlyAtPhaseLateRef.set(phaseLateCanvas.snapshot(new SnapshotParameters(), null).getPixelReader().getColor(12, 20));
-                lateAtPhaseLateRef.set(phaseLateCanvas.snapshot(new SnapshotParameters(), null).getPixelReader().getColor(90, 20));
+                renderer.render(phaseLateCanvas.getGraphicsContext2D(), List.of(line), 0.35);
+                var phaseLaterReader = phaseLateCanvas.snapshot(new SnapshotParameters(), null).getPixelReader();
+                phaseLaterMidRef.set(phaseLaterReader.getColor(35, 20));
+                phaseLaterTailRef.set(phaseLaterReader.getColor(94, 20));
             } catch (Throwable throwable) {
                 errorRef.set(throwable);
             } finally {
@@ -91,16 +132,16 @@ class FlowLineOverlayRendererTest {
         if (errorRef.get() != null) {
             throw new AssertionError(errorRef.get());
         }
-
-        Color earlyAtPhaseZero = earlyAtPhaseZeroRef.get();
-        Color lateAtPhaseZero = lateAtPhaseZeroRef.get();
-        Color earlyAtPhaseLate = earlyAtPhaseLateRef.get();
-        Color lateAtPhaseLate = lateAtPhaseLateRef.get();
-
-        assertNotEquals(earlyAtPhaseZero, earlyAtPhaseLate);
-        assertNotEquals(lateAtPhaseZero, lateAtPhaseLate);
-        assertTrue(earlyAtPhaseZero.getOpacity() >= lateAtPhaseZero.getOpacity());
-        assertTrue(lateAtPhaseLate.getOpacity() >= earlyAtPhaseLate.getOpacity());
+        Color phaseZeroMid = phaseZeroMidRef.get();
+        Color phaseZeroTail = phaseZeroTailRef.get();
+        Color phaseLaterMid = phaseLaterMidRef.get();
+        Color phaseLaterTail = phaseLaterTailRef.get();
+        assertNotEquals(phaseZeroMid, phaseLaterMid);
+        assertNotEquals(phaseZeroTail, phaseLaterTail);
+        assertTrue(phaseZeroMid.getBrightness() > 0.95);
+        assertTrue(phaseZeroTail.getBrightness() < 0.2);
+        assertTrue(phaseLaterMid.getBrightness() < 0.2);
+        assertTrue(phaseLaterTail.getBrightness() > 0.95);
     }
 
     private boolean await(CountDownLatch latch) {

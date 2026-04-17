@@ -73,4 +73,21 @@ class FlowLineGeneratorTest {
 
         assertTrue(lines.size() <= 4);
     }
+
+    @Test
+    void smoothPointsBuildsDenserCurveAndKeepsEndpoints() {
+        List<FlowLineGenerator.FlowPoint> source = List.of(
+            new FlowLineGenerator.FlowPoint(0.0, 0.0),
+            new FlowLineGenerator.FlowPoint(30.0, 18.0),
+            new FlowLineGenerator.FlowPoint(60.0, -12.0),
+            new FlowLineGenerator.FlowPoint(90.0, 0.0)
+        );
+
+        List<FlowLineGenerator.FlowPoint> smoothed = generator.smoothPoints(source);
+
+        assertTrue(smoothed.size() > source.size());
+        assertTrue(smoothed.get(0).x() == 0.0 && smoothed.get(0).y() == 0.0);
+        assertTrue(smoothed.get(smoothed.size() - 1).x() == 90.0
+            && smoothed.get(smoothed.size() - 1).y() == 0.0);
+    }
 }
