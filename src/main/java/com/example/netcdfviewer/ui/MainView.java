@@ -80,6 +80,8 @@ public final class MainView extends BorderPane {
     private final Label currentVariableLabel = new Label("Variable: -");
     // 坐标变量标签。
     private final Label coordinateVariableLabel = new Label("Coordinates: -");
+    // 标准格网坐标选择标签。
+    private final Label coordinateSelectionLabel = new Label("Structured coordinates");
     // 连接变量标签。
     private final Label connectivityVariableLabel = new Label("Connectivity: -");
     // 变量细节标签。
@@ -96,6 +98,10 @@ public final class MainView extends BorderPane {
     private final Slider depthSlider = new Slider(0, 0, 0);
     // 颜色表下拉框。
     private final ComboBox<String> colorMapCombo = new ComboBox<>();
+    // 结构化网格 X 轴选择框。
+    private final ComboBox<String> coordinateXCombo = new ComboBox<>();
+    // 结构化网格 Y 轴选择框。
+    private final ComboBox<String> coordinateYCombo = new ComboBox<>();
     // 自动范围复选框。
     private final CheckBox autoRangeCheck = new CheckBox("Auto range");
     // 流线叠加开关。
@@ -114,6 +120,8 @@ public final class MainView extends BorderPane {
     private final StackPane canvasHost = new StackPane();
     // 主画布和色条组合容器。
     private final HBox visualizationBox = new HBox(12);
+    // 结构化网格坐标选择容器。
+    private final VBox coordinateSelectionBox = new VBox(6);
 
     public MainView() {
         // 构造时立即生成整套界面布局。
@@ -197,6 +205,19 @@ public final class MainView extends BorderPane {
         depthSlider.setMinorTickCount(0);
         depthSlider.setShowTickMarks(true);
         depthSlider.setShowTickLabels(false);
+        coordinateXCombo.setPromptText("X axis");
+        coordinateYCombo.setPromptText("Y axis");
+        coordinateSelectionBox.getChildren().addAll(
+            coordinateSelectionLabel,
+            new Label("X axis"),
+            coordinateXCombo,
+            new Label("Y axis"),
+            coordinateYCombo
+        );
+        coordinateSelectionBox.setVisible(false);
+        coordinateSelectionBox.setManaged(false);
+        coordinateXCombo.setDisable(true);
+        coordinateYCombo.setDisable(true);
 
         autoRangeCheck.setSelected(true);
         flowLineCheck.setDisable(true);
@@ -210,6 +231,7 @@ public final class MainView extends BorderPane {
         VBox rightPanel = new VBox(
             10,
             coordinateVariableLabel,
+            coordinateSelectionBox,
             connectivityVariableLabel,
             variableMetaLabel,
             visualizeButton,
@@ -387,6 +409,18 @@ public final class MainView extends BorderPane {
 
     public ComboBox<String> getColorMapCombo() {
         return colorMapCombo;
+    }
+
+    public ComboBox<String> getCoordinateXCombo() {
+        return coordinateXCombo;
+    }
+
+    public ComboBox<String> getCoordinateYCombo() {
+        return coordinateYCombo;
+    }
+
+    public VBox getCoordinateSelectionBox() {
+        return coordinateSelectionBox;
     }
 
     public CheckBox getAutoRangeCheck() {

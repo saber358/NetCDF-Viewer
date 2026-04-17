@@ -1,6 +1,9 @@
 package com.example.netcdfviewer.render;
 
+import com.example.netcdfviewer.model.CoordinateBinding;
 import com.example.netcdfviewer.model.MeshData;
+import com.example.netcdfviewer.model.StructuredGridData;
+import com.example.netcdfviewer.model.StructuredGridDomain;
 import com.example.netcdfviewer.ui.ViewportState;
 import org.junit.jupiter.api.Test;
 
@@ -68,5 +71,54 @@ class WaveArrowOverlayRendererTest {
 
         assertTrue(renderer.mapArrowLength(0.0, wavelengthRange) >= WaveArrowOverlayRenderer.MIN_ARROW_LENGTH);
         assertTrue(renderer.mapArrowLength(1000.0, wavelengthRange) <= WaveArrowOverlayRenderer.MAX_ARROW_LENGTH);
+    }
+
+    @Test
+    void sampleStructuredArrowsBuildsBoundedGlyphsForValidWaveField() {
+        StructuredGridDomain directionDomain = new StructuredGridDomain(
+            new StructuredGridData(
+                new CoordinateBinding("binding:lon:lat", "lon", "lat", List.of("x", "y"), false),
+                new double[]{0.0, 1.0, 2.0},
+                new double[]{0.0, 1.0, 2.0},
+                null,
+                null,
+                3,
+                3
+            ),
+            new CoordinateBinding("binding:lon:lat", "lon", "lat", List.of("x", "y"), false)
+        );
+        StructuredGridDomain wavelengthDomain = new StructuredGridDomain(
+            new StructuredGridData(
+                new CoordinateBinding("binding:lon:lat", "lon", "lat", List.of("x", "y"), false),
+                new double[]{0.0, 1.0, 2.0},
+                new double[]{0.0, 1.0, 2.0},
+                null,
+                null,
+                3,
+                3
+            ),
+            new CoordinateBinding("binding:lon:lat", "lon", "lat", List.of("x", "y"), false)
+        );
+        RangeStats wavelengthRange = RenderMath.computeRange(new double[]{12.0, 18.0, 24.0, 16.0}, null);
+
+        List<WaveArrowOverlayRenderer.ArrowGlyph> arrows = renderer.sampleStructuredArrows(
+            directionDomain,
+            wavelengthDomain,
+            new double[]{45.0, 45.0, 45.0, 45.0, 45.0, 45.0, 45.0, 45.0, 45.0},
+            new double[]{12.0, 18.0, 24.0, 16.0, 20.0, 22.0, 18.0, 19.0, 21.0},
+            new ViewportState.Snapshot(24.0, 0.0, 48.0),
+            64,
+            64,
+            false,
+            false,
+            null,
+            null,
+            0,
+            wavelengthRange
+        );
+
+        assertFalse(arrows.isEmpty());
+        assertTrue(arrows.stream().allMatch(arrow -> arrow.length() >= WaveArrowOverlayRenderer.MIN_ARROW_LENGTH));
+        assertTrue(arrows.stream().allMatch(arrow -> arrow.length() <= WaveArrowOverlayRenderer.MAX_ARROW_LENGTH));
     }
 }

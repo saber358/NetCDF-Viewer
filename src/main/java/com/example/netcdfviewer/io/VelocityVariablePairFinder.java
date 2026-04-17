@@ -138,7 +138,18 @@ public final class VelocityVariablePairFinder {
         }
 
         // 3.7 所有条件满足后返回校验后的配对对象。
-        Optional<VelocityVariablePair> pair = Optional.of(new VelocityVariablePair(eastward, northward));
+        Optional<VelocityVariablePair> pair;
+        try {
+            pair = Optional.of(new VelocityVariablePair(eastward, northward));
+        } catch (IllegalArgumentException exception) {
+            logger.info(() -> "速度变量配对校验失败，放弃配对, eastwardVariable="
+                + eastward.name()
+                + ", northwardVariable="
+                + northward.name()
+                + ", reason="
+                + exception.getMessage());
+            return Optional.empty();
+        }
 
         logger.info(() -> "速度变量配对组装完成, eastwardVariable="
             + eastward.name()

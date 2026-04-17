@@ -1,6 +1,7 @@
 package com.example.netcdfviewer.render;
 
 import com.example.netcdfviewer.model.MeshData;
+import com.example.netcdfviewer.model.StructuredGridDomain;
 import com.example.netcdfviewer.ui.ViewportState;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.paint.Color;
@@ -83,7 +84,73 @@ public final class WaveArrowOverlayRenderer {
 
     /*
      * ========================================================================
-     * 步骤2：采样波场箭头
+     * 步骤2：绘制结构化网格波场箭头叠加层
+     * ========================================================================
+     * 目标：
+     *   1) 在标准格网底图之上绘制波向箭头
+     *   2) 兼容波向和波长来自不同结构化坐标基准
+     * 操作要点：
+     *   1) 先采样结构化箭头集合
+     *   2) 再统一绘制主杆和箭头头部
+     */
+    public void renderStructured(
+        GraphicsContext graphics,
+        StructuredGridDomain directionDomain,
+        StructuredGridDomain wavelengthDomain,
+        double[] directionValues,
+        double[] wavelengthValues,
+        ViewportState.Snapshot snapshot,
+        int width,
+        int height,
+        boolean directionCellCentered,
+        boolean wavelengthCellCentered,
+        Double directionFillValue,
+        Double wavelengthFillValue,
+        int layerIndex,
+        RangeStats wavelengthRange
+    ) {
+        logger.info(() -> "开始绘制结构化网格波场箭头叠加层, width=" + width + ", height=" + height + ", layerIndex=" + layerIndex);
+
+        // 2.1 先采样当前视口内可绘制的结构化波箭头。
+        List<ArrowGlyph> arrows = sampleStructuredArrows(
+            directionDomain,
+            wavelengthDomain,
+            directionValues,
+            wavelengthValues,
+            snapshot,
+            width,
+            height,
+            directionCellCentered,
+            wavelengthCellCentered,
+            directionFillValue,
+            wavelengthFillValue,
+            layerIndex,
+            wavelengthRange
+        );
+        if (arrows.isEmpty()) {
+            logger.info("结构化网格波场箭头叠加层绘制结束, arrowCount=0");
+            return;
+        }
+
+        // 2.2 统一设置箭头图形样式并逐个绘制。
+        graphics.save();
+        graphics.setStroke(ARROW_COLOR);
+        graphics.setLineWidth(1.2);
+        try {
+            for (ArrowGlyph arrow : arrows) {
+                graphics.strokeLine(arrow.startX(), arrow.startY(), arrow.endX(), arrow.endY());
+                drawHead(graphics, arrow);
+            }
+        } finally {
+            graphics.restore();
+        }
+
+        logger.info(() -> "结构化网格波场箭头叠加层绘制结束, arrowCount=" + arrows.size());
+    }
+
+    /*
+     * ========================================================================
+     * 步骤3：采样波场箭头
      * ========================================================================
      * 目标：
      *   1) 从当前屏幕网格中采样出可绘制的箭头集合
@@ -172,7 +239,94 @@ public final class WaveArrowOverlayRenderer {
 
     /*
      * ========================================================================
-     * 步骤3：映射箭头长度
+     * 步骤4：采样结构化网格波场箭头
+     * ========================================================================
+     * 目标：
+     *   1) 在结构化网格上采样波向和波长
+     * 操作要点：
+     *   1) 两个字段允许使用不同的结构化基准
+     *   2) 只有两个值都有效时才生成箭头
+     */
+    List<ArrowGlyph> sampleStructuredArrows(
+        StructuredGridDomain directionDomain,
+        StructuredGridDomain wavelengthDomain,
+        double[] directionValues,
+        double[] wavelengthValues,
+        ViewportState.Snapshot snapshot,
+        int width,
+        int height,
+        boolean directionCellCentered,
+        boolean wavelengthCellCentered,
+        Double directionFillValue,
+        Double wavelengthFillValue,
+        int layerIndex,
+        RangeStats wavelengthRange
+    ) {
+        logger.info(() -> "开始采样结构化网格波场箭头, width=" + width + ", height=" + height + ", layerIndex=" + layerIndex);
+
+        // 4.1 输入为空或范围无效时直接返回空集合。
+        if (directionDomain == null
+            || wavelengthDomain == null
+            || directionValues == null
+            || wavelengthValues == null
+            || snapshot == null
+            || width <= 0
+            || height <= 0
+            || wavelengthRange == null
+            || wavelengthRange.empty()) {
+            logger.info("结构化网格波场箭头采样结束, arrowCount=0");
+            return List.of();
+        }
+
+        // 4.2 按固定屏幕步长逐点采样结构化波场。
+        List<ArrowGlyph> arrows = new ArrayList<>();
+        for (int screenY = SAMPLE_SPACING / 2; screenY < height; screenY += SAMPLE_SPACING) {
+            for (int screenX = SAMPLE_SPACING / 2; screenX < width; screenX += SAMPLE_SPACING) {
+                StructuredPointQuery.Result directionResult = StructuredPointQuery.query(
+                    directionDomain,
+                    directionValues,
+                    snapshot,
+                    screenX,
+                    screenY,
+                    directionCellCentered,
+                    directionFillValue,
+                    layerIndex
+                );
+                StructuredPointQuery.Result wavelengthResult = StructuredPointQuery.query(
+                    wavelengthDomain,
+                    wavelengthValues,
+                    snapshot,
+                    screenX,
+                    screenY,
+                    wavelengthCellCentered,
+                    wavelengthFillValue,
+                    layerIndex
+                );
+                if (!directionResult.hasValue() || !wavelengthResult.hasValue()) {
+                    continue;
+                }
+
+                double length = mapArrowLength(wavelengthResult.value(), wavelengthRange);
+                double radians = Math.toRadians(directionResult.value());
+                double dx = Math.cos(radians) * length;
+                double dy = -Math.sin(radians) * length;
+                arrows.add(new ArrowGlyph(
+                    screenX,
+                    screenY,
+                    screenX + dx,
+                    screenY + dy,
+                    length
+                ));
+            }
+        }
+
+        logger.info(() -> "结构化网格波场箭头采样结束, arrowCount=" + arrows.size());
+        return arrows;
+    }
+
+    /*
+     * ========================================================================
+     * 步骤5：映射箭头长度
      * ========================================================================
      * 目标：
      *   1) 将波长值压缩到稳定的像素长度区间
@@ -195,7 +349,7 @@ public final class WaveArrowOverlayRenderer {
 
     /*
      * ========================================================================
-     * 步骤4：绘制箭头头部
+     * 步骤6：绘制箭头头部
      * ========================================================================
      * 目标：
      *   1) 为箭头主杆补出箭头头部

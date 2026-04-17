@@ -35,22 +35,32 @@ public record WaveVariablePair(
             throw new IllegalArgumentException("Wave variables must both be plottable.");
         }
 
-        // 1.3 校验两个变量共享同一个空间轴位置。
+        // 1.3 校验两个变量来自同一种几何类型。
+        if (directionVariable.geometryKind() != wavelengthVariable.geometryKind()) {
+            throw new IllegalArgumentException("Wave variables must share the same geometry kind.");
+        }
+
+        // 1.4 校验两个变量共享同一个空间轴位置。
         if (directionVariable.nodeAxis() != wavelengthVariable.nodeAxis()) {
             throw new IllegalArgumentException("Wave variables must share the same spatial axis.");
         }
 
-        // 1.4 校验两个变量都基于相同的节点/单元中心定义。
+        // 1.5 校验两个变量都基于相同的节点/单元中心定义。
         if (directionVariable.elementCentered() != wavelengthVariable.elementCentered()) {
             throw new IllegalArgumentException("Wave variables must share the same mesh basis.");
         }
 
-        // 1.5 校验两个变量的层化结构一致。
+        // 1.6 波场变量必须共享同一个水平基准。
+        if (!Objects.equals(directionVariable.basisId(), wavelengthVariable.basisId())) {
+            throw new IllegalArgumentException("Wave variables must share the same basis.");
+        }
+
+        // 1.7 校验两个变量的层化结构一致。
         if (directionVariable.layered() != wavelengthVariable.layered()) {
             throw new IllegalArgumentException("Wave variables must share the same layered shape.");
         }
 
-        // 1.6 若是分层变量，则进一步校验层维名称和层数一致。
+        // 1.8 若是分层变量，则进一步校验层维名称和层数一致。
         if (directionVariable.layered()
             && (!directionVariable.layerDimensionName().equals(wavelengthVariable.layerDimensionName())
             || directionVariable.layerCount() != wavelengthVariable.layerCount())) {

@@ -50,6 +50,39 @@ class VelocityVariablePairFinderTest {
     }
 
     @Test
+    void findAcceptsCompatibleStructuredStaggeredUvPair() {
+        Optional<VelocityVariablePair> pair = finder.find(List.of(
+            structuredVariable("u", "basis:lon_u:lat_u", List.of("depth", "y_u", "x_u"), List.of(3, 10, 11)),
+            structuredVariable("v", "basis:lon_v:lat_v", List.of("depth", "y_v", "x_v"), List.of(3, 11, 10))
+        ));
+
+        assertTrue(pair.isPresent());
+    }
+
+    @Test
+    void findRejectsMixedGeometryKinds() {
+        Optional<VelocityVariablePair> pair = finder.find(List.of(
+            variable("u", true, 0, true, 0, List.of("siglay", "nele"), List.of(5, 12)),
+            new VariableInfo(
+                "v",
+                "FLOAT",
+                List.of("depth", "y_v", "x_v"),
+                List.of(3, 11, 10),
+                true,
+                1,
+                false,
+                0,
+                null,
+                "basis:lon_v:lat_v",
+                com.example.netcdfviewer.model.SpatialDomain.Kind.STRUCTURED_GRID,
+                false
+            )
+        ));
+
+        assertTrue(pair.isEmpty());
+    }
+
+    @Test
     void resolveLayerIndexClampsLayeredVelocityPair() {
         VelocityVariablePair pair = new VelocityVariablePair(
             variable("u", true, 0, true, 0, List.of("siglay", "nele"), List.of(5, 12)),
@@ -80,6 +113,28 @@ class VelocityVariablePairFinderTest {
             elementCentered,
             layerAxis,
             null
+        );
+    }
+
+    private static VariableInfo structuredVariable(
+        String name,
+        String basisId,
+        List<String> dimensionNames,
+        List<Integer> dimensionSizes
+    ) {
+        return new VariableInfo(
+            name,
+            "FLOAT",
+            dimensionNames,
+            dimensionSizes,
+            true,
+            1,
+            false,
+            0,
+            null,
+            basisId,
+            com.example.netcdfviewer.model.SpatialDomain.Kind.STRUCTURED_GRID,
+            false
         );
     }
 }

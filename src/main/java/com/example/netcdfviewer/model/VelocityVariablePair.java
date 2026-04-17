@@ -35,22 +35,33 @@ public record VelocityVariablePair(
             throw new IllegalArgumentException("Velocity variables must both be plottable.");
         }
 
-        // 1.3 校验两个变量共享同一个空间轴位置。
+        // 1.3 校验两个变量来自同一种几何类型。
+        if (eastwardVariable.geometryKind() != northwardVariable.geometryKind()) {
+            throw new IllegalArgumentException("Velocity variables must share the same geometry kind.");
+        }
+
+        // 1.4 校验两个变量共享同一个空间轴位置。
         if (eastwardVariable.nodeAxis() != northwardVariable.nodeAxis()) {
             throw new IllegalArgumentException("Velocity variables must share the same spatial axis.");
         }
 
-        // 1.4 校验两个变量基于同一种节点/单元中心定义。
+        // 1.5 校验两个变量基于同一种节点/单元中心定义。
         if (eastwardVariable.elementCentered() != northwardVariable.elementCentered()) {
             throw new IllegalArgumentException("Velocity variables must share the same mesh basis.");
         }
 
-        // 1.5 校验两个变量的层化结构一致。
+        // 1.6 三角网速度场要求两个变量共享同一个水平基准。
+        if (eastwardVariable.geometryKind() == SpatialDomain.Kind.TRIANGLE_MESH
+            && !Objects.equals(eastwardVariable.basisId(), northwardVariable.basisId())) {
+            throw new IllegalArgumentException("Triangle velocity variables must share the same basis.");
+        }
+
+        // 1.7 校验两个变量的层化结构一致。
         if (eastwardVariable.layered() != northwardVariable.layered()) {
             throw new IllegalArgumentException("Velocity variables must share the same layered shape.");
         }
 
-        // 1.6 若是分层变量，则进一步校验层维名称和层数一致。
+        // 1.8 若是分层变量，则进一步校验层维名称和层数一致。
         if (eastwardVariable.layered()
             && (!eastwardVariable.layerDimensionName().equals(northwardVariable.layerDimensionName())
             || eastwardVariable.layerCount() != northwardVariable.layerCount())) {

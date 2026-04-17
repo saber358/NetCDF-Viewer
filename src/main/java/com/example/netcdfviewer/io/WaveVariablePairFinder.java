@@ -112,7 +112,18 @@ public final class WaveVariablePairFinder {
         }
 
         // 2.8 所有条件满足后返回校验后的配对对象。
-        Optional<WaveVariablePair> pair = Optional.of(new WaveVariablePair(direction, wavelength));
+        Optional<WaveVariablePair> pair;
+        try {
+            pair = Optional.of(new WaveVariablePair(direction, wavelength));
+        } catch (IllegalArgumentException exception) {
+            logger.info(() -> "波场变量配对校验失败，放弃配对, directionVariable="
+                + direction.name()
+                + ", wavelengthVariable="
+                + wavelength.name()
+                + ", reason="
+                + exception.getMessage());
+            return Optional.empty();
+        }
 
         logger.info(() -> "变量列表波场变量配对查找完成, directionVariable="
             + direction.name()

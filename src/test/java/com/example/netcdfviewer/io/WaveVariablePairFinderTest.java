@@ -58,6 +58,42 @@ class WaveVariablePairFinderTest {
     }
 
     @Test
+    void findExactWavePairReturnsStructuredPairWhenBasisMatches() {
+        Optional<WaveVariablePair> pair = finder.find(List.of(
+            new VariableInfo(
+                "wdir",
+                "FLOAT",
+                List.of("depth", "y_rho", "x_rho"),
+                List.of(3, 10, 11),
+                true,
+                1,
+                false,
+                0,
+                null,
+                "binding:lon_rho:lat_rho",
+                com.example.netcdfviewer.model.SpatialDomain.Kind.STRUCTURED_GRID,
+                false
+            ),
+            new VariableInfo(
+                "wlen",
+                "FLOAT",
+                List.of("depth", "y_rho", "x_rho"),
+                List.of(3, 10, 11),
+                true,
+                1,
+                false,
+                0,
+                null,
+                "binding:lon_rho:lat_rho",
+                com.example.netcdfviewer.model.SpatialDomain.Kind.STRUCTURED_GRID,
+                false
+            )
+        ));
+
+        assertTrue(pair.isPresent());
+    }
+
+    @Test
     void resolveLayerIndexClampsToSupportedRange() {
         WaveVariablePair pair = new WaveVariablePair(
             variable("wdir", true, 1, false, 0, List.of("siglay", "node"), List.of(4, 12)),

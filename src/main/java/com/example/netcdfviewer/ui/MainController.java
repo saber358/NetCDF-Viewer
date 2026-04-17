@@ -3,6 +3,9 @@ package com.example.netcdfviewer.ui;
 import com.example.netcdfviewer.AppMetadata;
 import com.example.netcdfviewer.io.NetcdfDatasetParser;
 import com.example.netcdfviewer.io.ParsedDataset;
+import com.example.netcdfviewer.model.CoordinateBinding;
+import com.example.netcdfviewer.model.SpatialDomain;
+import com.example.netcdfviewer.model.StructuredGridDomain;
 import com.example.netcdfviewer.io.VelocityVariablePairFinder;
 import com.example.netcdfviewer.io.WaveVariablePairFinder;
 import com.example.netcdfviewer.model.VariableInfo;
@@ -19,6 +22,8 @@ import com.example.netcdfviewer.render.FlowLineOverlayRenderer;
 import com.example.netcdfviewer.render.MeshPointQuery;
 import com.example.netcdfviewer.render.RangeStats;
 import com.example.netcdfviewer.render.RenderMath;
+import com.example.netcdfviewer.render.StructuredGridImageRenderer;
+import com.example.netcdfviewer.render.StructuredPointQuery;
 import com.example.netcdfviewer.render.TriangleImageRenderer;
 import com.example.netcdfviewer.render.WaveArrowOverlayRenderer;
 import javafx.animation.Animation;
@@ -69,6 +74,8 @@ public final class MainController {
     private final VelocityVariablePairFinder velocityVariablePairFinder = new VelocityVariablePairFinder();
     // 后台离屏渲染器。
     private final TriangleImageRenderer imageRenderer = new TriangleImageRenderer();
+    // 标准格网离屏渲染器。
+    private final StructuredGridImageRenderer structuredImageRenderer = new StructuredGridImageRenderer();
     // 流线采样器。
     private final FlowLineGenerator flowLineGenerator = new FlowLineGenerator();
     // 波场箭头叠加绘制器。
@@ -81,10 +88,16 @@ public final class MainController {
     private final ViewportState viewportState = new ViewportState();
     // 可用颜色表集合。
     private final Map<String, ColorMap> colorMaps = new LinkedHashMap<>();
+    // 每个数据集记住的结构化坐标绑定选择。
+    private final Map<Path, String> preferredCoordinateBindingIds = new LinkedHashMap<>();
     // 已加载数据集集合。
     private final ObservableList<LoadedDatasetItem> loadedDatasets = FXCollections.observableArrayList();
     // 当前已打开的数据集。
     private ParsedDataset currentDataset;
+    // 当前激活的数据空间域；标准格网会随坐标绑定切换。
+    private SpatialDomain activeSpatialDomain;
+    // 当前激活的结构化网格坐标绑定。
+    private CoordinateBinding activeCoordinateBinding;
     // 当前选中的变量。
     private VariableInfo currentVariable;
     // 鼠标拖拽起点。
@@ -113,6 +126,8 @@ public final class MainController {
     private Timeline flowAnimationTimeline;
     // 当前流线亮带动画相位。
     private double flowAnimationPhase;
+    // 是否正在内部刷新坐标控件。
+    private boolean updatingCoordinateControls;
     // 判定点击与拖拽的像素阈值。
     private static final double CLICK_TOLERANCE = 4.0;
 
@@ -211,6 +226,7 @@ public final class MainController {
         // 变量选择变化时，刷新变量元信息、层控制和渲染结果。
         view.getVariableList().getSelectionModel().selectedItemProperty().addListener((obs, oldValue, newValue) -> {
             currentVariable = newValue;
+            updateCoordinateControls();
             updateVariableMeta();
             updateDepthControls();
             renderCurrentSelection();
@@ -256,6 +272,9 @@ public final class MainController {
         });
         // 手动应用范围时重新渲染。
         view.getApplyRangeButton().setOnAction(event -> renderCurrentSelection());
+        // 结构化网格坐标选择变化时切换活动坐标域并重绘。
+        view.getCoordinateXCombo().valueProperty().addListener((obs, oldValue, newValue) -> handleCoordinateSelectionChanged(true));
+        view.getCoordinateYCombo().valueProperty().addListener((obs, oldValue, newValue) -> handleCoordinateSelectionChanged(false));
     }
 
     private void wireMouseNavigation() {
@@ -266,7 +285,7 @@ public final class MainController {
             }
         });
         view.getCanvasHost().setOnMouseDragged(event -> {
-            if (dragAnchor == null || currentDataset == null || !currentDataset.hasMesh()) {
+            if (dragAnchor == null || activeSpatialDomain == null) {
                 return;
             }
             Point2D currentPoint = new Point2D(event.getX(), event.getY());
@@ -286,7 +305,7 @@ public final class MainController {
             clickAnchor = null;
         });
         view.getCanvasHost().setOnScroll(event -> {
-            if (currentDataset == null || !currentDataset.hasMesh()) {
+            if (activeSpatialDomain == null) {
                 return;
             }
             double factor = event.getDeltaY() >= 0 ? 1.12 : 1.0 / 1.12;
@@ -441,6 +460,8 @@ public final class MainController {
     private void activateDataset(LoadedDatasetItem item) {
         // 切换活动数据集时先重置与当前渲染相关的瞬时状态。
         currentDataset = item.dataset();
+        activeSpatialDomain = item.dataset().spatialDomain();
+        activeCoordinateBinding = item.dataset().selectedCoordinateBinding().orElse(null);
         currentVariable = null;
         activeWavePair = waveVariablePairFinder.find(item.dataset()).orElse(null);
         activeVelocityPair = velocityVariablePairFinder.find(item.dataset()).orElse(null);
@@ -453,6 +474,7 @@ public final class MainController {
         viewportState.reset();
         // 更新摘要、属性和警告面板。
         updateDatasetPanels(item.dataset());
+        updateCoordinateControls();
         // 将该数据集的变量加载到变量列表中。
         view.getVariableList().setItems(FXCollections.observableArrayList(item.dataset().variables()));
         view.getCurrentVariableLabel().setText("Variable: -");
@@ -466,7 +488,7 @@ public final class MainController {
             view.getVariableList().getSelectionModel().select(preferredVariable);
         } else if (!item.dataset().variables().isEmpty()) {
             view.getVariableList().getSelectionModel().select(0);
-            renderPlaceholder("This dataset contains no plottable triangle variable.");
+            renderPlaceholder("This dataset contains no plottable planar variable.");
         } else {
             updateVariableMeta();
             renderPlaceholder("The file contains no variables.");
@@ -521,6 +543,7 @@ public final class MainController {
 
         int selectedIndex = view.getDatasetList().getSelectionModel().getSelectedIndex();
         loadedDatasets.remove(selected);
+        preferredCoordinateBindingIds.remove(selected.sourcePath());
 
         if (loadedDatasets.isEmpty()) {
             clearActiveDatasetState();
@@ -535,6 +558,8 @@ public final class MainController {
 
     private void clearActiveDatasetState() {
         currentDataset = null;
+        activeSpatialDomain = null;
+        activeCoordinateBinding = null;
         currentVariable = null;
         activeWavePair = null;
         activeVelocityPair = null;
@@ -547,6 +572,12 @@ public final class MainController {
         view.getVariableList().getItems().clear();
         view.getDatasetLabel().setText("No file loaded");
         view.getCoordinateVariableLabel().setText("Coordinates: -");
+        view.getCoordinateSelectionBox().setVisible(false);
+        view.getCoordinateSelectionBox().setManaged(false);
+        view.getCoordinateXCombo().getItems().clear();
+        view.getCoordinateYCombo().getItems().clear();
+        view.getCoordinateXCombo().setDisable(true);
+        view.getCoordinateYCombo().setDisable(true);
         view.getConnectivityVariableLabel().setText("Connectivity: -");
         view.getVariableMetaLabel().setText("Variable details: -");
         view.getCurrentVariableLabel().setText("Variable: -");
@@ -580,23 +611,375 @@ public final class MainController {
         return path.toAbsolutePath().normalize();
     }
 
+    /*
+     * ========================================================================
+     * 步骤1：刷新结构化网格坐标控件
+     * ========================================================================
+     * 目标：
+     *   1) 让标准格网数据按当前变量自动匹配坐标基准
+     *   2) 在有多个候选时开放横纵坐标切换
+     * 操作要点：
+     *   1) 三角网直接隐藏控件
+     *   2) 标准格网优先选当前变量兼容的绑定
+     */
+    private void updateCoordinateControls() {
+        // 1.1 无数据集时直接隐藏控件并清空活动绑定。
+        if (currentDataset == null) {
+            activeSpatialDomain = null;
+            activeCoordinateBinding = null;
+            updateCoordinateControlState(List.of(), null);
+            return;
+        }
+
+        // 1.2 三角网或无坐标候选时沿用原始空间域，并隐藏控件。
+        if (!currentDataset.hasSpatialDomain()
+            || currentDataset.spatialDomain().kind() != SpatialDomain.Kind.STRUCTURED_GRID
+            || currentDataset.coordinateBindings().isEmpty()) {
+            activeSpatialDomain = currentDataset.spatialDomain();
+            activeCoordinateBinding = null;
+            updateCoordinateControlState(List.of(), null);
+            return;
+        }
+
+        // 1.3 先按当前变量筛出兼容的坐标绑定，再决定激活哪一个。
+        List<CoordinateBinding> compatibleBindings = resolveCompatibleCoordinateBindings();
+        CoordinateBinding binding = resolvePreferredCoordinateBinding(compatibleBindings);
+        applyActiveCoordinateBinding(binding, compatibleBindings, false);
+    }
+
+    /*
+     * ========================================================================
+     * 步骤2：响应结构化网格坐标切换
+     * ========================================================================
+     * 目标：
+     *   1) 把用户在 X/Y 下拉框中的选择收敛成一个有效绑定
+     *   2) 切换活动空间域后立即触发重绘
+     * 操作要点：
+     *   1) 内部刷新控件时不重复处理
+     *   2) 选不到精确组合时按用户刚改的轴兜底
+     */
+    private void handleCoordinateSelectionChanged(boolean xAxisChanged) {
+        // 2.1 没有结构化网格上下文或当前正在内部刷新时直接返回。
+        if (updatingCoordinateControls
+            || currentDataset == null
+            || activeSpatialDomain == null
+            || activeSpatialDomain.kind() != SpatialDomain.Kind.STRUCTURED_GRID) {
+            return;
+        }
+
+        // 2.2 用当前变量可接受的候选集合解析用户选择的坐标绑定。
+        List<CoordinateBinding> compatibleBindings = resolveCompatibleCoordinateBindings();
+        CoordinateBinding binding = resolveBindingFromSelection(
+            compatibleBindings,
+            view.getCoordinateXCombo().getValue(),
+            view.getCoordinateYCombo().getValue(),
+            xAxisChanged
+        );
+        if (binding == null) {
+            return;
+        }
+
+        // 2.3 切换活动绑定并重绘当前变量。
+        applyActiveCoordinateBinding(binding, compatibleBindings, true);
+        renderCurrentSelection();
+    }
+
+    /*
+     * ========================================================================
+     * 步骤3：筛选当前变量兼容的坐标绑定
+     * ========================================================================
+     * 目标：
+     *   1) 避免把不匹配当前变量维度的横纵坐标暴露到界面
+     * 操作要点：
+     *   1) 优先用 basisId 精确匹配
+     *   2) 再回退到维度包含关系匹配
+     */
+    private List<CoordinateBinding> resolveCompatibleCoordinateBindings() {
+        // 3.1 当前数据集没有结构化坐标候选时直接返回空集合。
+        if (currentDataset == null || currentDataset.coordinateBindings().isEmpty()) {
+            return List.of();
+        }
+
+        // 3.2 没选变量或当前变量不是结构化可绘制字段时，直接暴露全部候选。
+        if (currentVariable == null
+            || !currentVariable.plottable()
+            || currentVariable.geometryKind() != SpatialDomain.Kind.STRUCTURED_GRID) {
+            return currentDataset.coordinateBindings();
+        }
+
+        // 3.3 先按 basisId 精确匹配；命中后直接返回该组候选。
+        if (currentVariable.basisId() != null) {
+            List<CoordinateBinding> matchedByBasis = currentDataset.coordinateBindings().stream()
+                .filter(binding -> currentVariable.basisId().equals(binding.id()))
+                .collect(Collectors.toList());
+            if (!matchedByBasis.isEmpty()) {
+                return matchedByBasis;
+            }
+        }
+
+        // 3.4 再按变量维度是否包含绑定维度做回退匹配。
+        List<CoordinateBinding> matchedByDimensions = currentDataset.coordinateBindings().stream()
+            .filter(binding -> currentVariable.dimensionNames().containsAll(binding.horizontalDimensions()))
+            .collect(Collectors.toList());
+        return matchedByDimensions.isEmpty() ? currentDataset.coordinateBindings() : matchedByDimensions;
+    }
+
+    /*
+     * ========================================================================
+     * 步骤4：决定当前应激活的结构化坐标绑定
+     * ========================================================================
+     * 目标：
+     *   1) 在记忆用户选择、变量基准和默认绑定之间选出当前绑定
+     * 操作要点：
+     *   1) 先尝试用户已记住的绑定
+     *   2) 再回到变量基准和数据集默认绑定
+     */
+    private CoordinateBinding resolvePreferredCoordinateBinding(List<CoordinateBinding> compatibleBindings) {
+        // 4.1 没有候选时直接返回空。
+        if (compatibleBindings.isEmpty()) {
+            return null;
+        }
+
+        // 4.2 先恢复当前数据集上一次成功选择的绑定。
+        String rememberedBindingId = preferredCoordinateBindingIds.get(currentDataset.sourcePath());
+        CoordinateBinding rememberedBinding = findBindingById(compatibleBindings, rememberedBindingId);
+        if (rememberedBinding != null) {
+            return rememberedBinding;
+        }
+
+        // 4.3 再优先对齐当前变量自己的水平基准。
+        CoordinateBinding variableBinding = currentVariable == null ? null : findBindingById(compatibleBindings, currentVariable.basisId());
+        if (variableBinding != null) {
+            return variableBinding;
+        }
+
+        // 4.4 保留当前仍然兼容的活动绑定，避免无意义跳变。
+        CoordinateBinding currentBinding = findBindingById(compatibleBindings, activeCoordinateBinding == null ? null : activeCoordinateBinding.id());
+        if (currentBinding != null) {
+            return currentBinding;
+        }
+
+        // 4.5 最后回落到数据集默认绑定或首个候选。
+        CoordinateBinding datasetBinding = findBindingById(
+            compatibleBindings,
+            currentDataset.selectedCoordinateBinding().map(CoordinateBinding::id).orElse(null)
+        );
+        return datasetBinding == null ? compatibleBindings.get(0) : datasetBinding;
+    }
+
+    /*
+     * ========================================================================
+     * 步骤5：把下拉框选择解析成有效绑定
+     * ========================================================================
+     * 目标：
+     *   1) 从 X/Y 选择值中恢复出真正的坐标绑定对象
+     * 操作要点：
+     *   1) 先匹配精确组合
+     *   2) 失败时按刚变更的轴做最小兜底
+     */
+    private CoordinateBinding resolveBindingFromSelection(
+        List<CoordinateBinding> compatibleBindings,
+        String selectedXName,
+        String selectedYName,
+        boolean xAxisChanged
+    ) {
+        // 5.1 没有候选时直接返回空。
+        if (compatibleBindings.isEmpty()) {
+            return null;
+        }
+
+        // 5.2 先找完全匹配当前 X/Y 组合的绑定。
+        CoordinateBinding exactBinding = compatibleBindings.stream()
+            .filter(binding -> binding.xName().equals(selectedXName) && binding.yName().equals(selectedYName))
+            .findFirst()
+            .orElse(null);
+        if (exactBinding != null) {
+            return exactBinding;
+        }
+
+        // 5.3 若精确组合不存在，则按用户刚修改的轴找首个兼容绑定。
+        if (xAxisChanged && selectedXName != null) {
+            CoordinateBinding xBinding = compatibleBindings.stream()
+                .filter(binding -> binding.xName().equals(selectedXName))
+                .findFirst()
+                .orElse(null);
+            if (xBinding != null) {
+                return xBinding;
+            }
+        }
+        if (!xAxisChanged && selectedYName != null) {
+            CoordinateBinding yBinding = compatibleBindings.stream()
+                .filter(binding -> binding.yName().equals(selectedYName))
+                .findFirst()
+                .orElse(null);
+            if (yBinding != null) {
+                return yBinding;
+            }
+        }
+
+        return compatibleBindings.get(0);
+    }
+
+    /*
+     * ========================================================================
+     * 步骤6：应用活动结构化坐标绑定
+     * ========================================================================
+     * 目标：
+     *   1) 同步活动空间域、界面下拉框和摘要信息
+     * 操作要点：
+     *   1) 先构造新的结构化空间域
+     *   2) 再刷新坐标控件和摘要文本
+     */
+    private void applyActiveCoordinateBinding(
+        CoordinateBinding binding,
+        List<CoordinateBinding> compatibleBindings,
+        boolean rememberSelection
+    ) {
+        // 6.1 无绑定时回退到数据集原始空间域。
+        if (binding == null || currentDataset == null) {
+            activeCoordinateBinding = null;
+            activeSpatialDomain = currentDataset == null ? null : currentDataset.spatialDomain();
+            updateCoordinateControlState(List.of(), null);
+            updateDatasetPanels(currentDataset);
+            return;
+        }
+
+        // 6.2 构造当前绑定对应的结构化空间域。
+        activeCoordinateBinding = binding;
+        activeSpatialDomain = buildStructuredDomain(currentDataset, binding);
+        if (activeSpatialDomain == null) {
+            activeSpatialDomain = currentDataset.spatialDomain();
+        }
+
+        // 6.3 刷新坐标控件展示状态。
+        updateCoordinateControlState(compatibleBindings, binding);
+
+        // 6.4 需要记住用户选择时，写回当前数据集的记忆表。
+        if (rememberSelection) {
+            preferredCoordinateBindingIds.put(currentDataset.sourcePath(), binding.id());
+        }
+
+        // 6.5 坐标绑定改变后同步刷新摘要面板和坐标标签。
+        updateDatasetPanels(currentDataset);
+    }
+
+    /*
+     * ========================================================================
+     * 步骤7：刷新坐标控件展示状态
+     * ========================================================================
+     * 目标：
+     *   1) 让坐标下拉框只显示当前可选项
+     * 操作要点：
+     *   1) 内部刷新时临时关闭监听
+     *   2) 没有候选时完全隐藏控件
+     */
+    private void updateCoordinateControlState(List<CoordinateBinding> compatibleBindings, CoordinateBinding selectedBinding) {
+        // 7.1 内部刷新控件时先拉起保护开关，避免重复触发监听。
+        updatingCoordinateControls = true;
+        try {
+            if (compatibleBindings.isEmpty() || selectedBinding == null) {
+                view.getCoordinateSelectionBox().setVisible(false);
+                view.getCoordinateSelectionBox().setManaged(false);
+                view.getCoordinateXCombo().getItems().clear();
+                view.getCoordinateYCombo().getItems().clear();
+                view.getCoordinateXCombo().setDisable(true);
+                view.getCoordinateYCombo().setDisable(true);
+                return;
+            }
+
+            // 7.2 用去重后的 X/Y 名称刷新下拉框内容。
+            view.getCoordinateSelectionBox().setVisible(true);
+            view.getCoordinateSelectionBox().setManaged(true);
+            view.getCoordinateXCombo().setItems(FXCollections.observableArrayList(
+                compatibleBindings.stream().map(CoordinateBinding::xName).distinct().toList()
+            ));
+            view.getCoordinateYCombo().setItems(FXCollections.observableArrayList(
+                compatibleBindings.stream().map(CoordinateBinding::yName).distinct().toList()
+            ));
+            view.getCoordinateXCombo().getSelectionModel().select(selectedBinding.xName());
+            view.getCoordinateYCombo().getSelectionModel().select(selectedBinding.yName());
+            view.getCoordinateXCombo().setDisable(compatibleBindings.size() <= 1);
+            view.getCoordinateYCombo().setDisable(compatibleBindings.size() <= 1);
+        } finally {
+            updatingCoordinateControls = false;
+        }
+    }
+
+    private CoordinateBinding findBindingById(List<CoordinateBinding> bindings, String bindingId) {
+        if (bindingId == null) {
+            return null;
+        }
+        return bindings.stream()
+            .filter(binding -> binding.id().equals(bindingId))
+            .findFirst()
+            .orElse(null);
+    }
+
+    private StructuredGridDomain buildStructuredDomain(ParsedDataset dataset, CoordinateBinding binding) {
+        if (dataset == null || binding == null) {
+            return null;
+        }
+        double[] xAxis = dataset.axisValues(binding.xName())
+            .or(() -> dataset.axisValues(binding.horizontalDimensions().get(0)))
+            .orElse(null);
+        double[] yAxis = dataset.axisValues(binding.yName())
+            .or(() -> dataset.axisValues(binding.horizontalDimensions().get(1)))
+            .orElse(null);
+        if (xAxis == null || yAxis == null || xAxis.length == 0 || yAxis.length == 0) {
+            return null;
+        }
+        return new StructuredGridDomain(
+            new com.example.netcdfviewer.model.StructuredGridData(
+                binding,
+                xAxis,
+                yAxis,
+                null,
+                null,
+                xAxis.length,
+                yAxis.length
+            ),
+            binding
+        );
+    }
+
+    private StructuredGridDomain resolveStructuredDomainForVariable(ParsedDataset dataset, VariableInfo variable) {
+        if (dataset == null
+            || variable == null
+            || variable.geometryKind() != SpatialDomain.Kind.STRUCTURED_GRID
+            || dataset.coordinateBindings().isEmpty()) {
+            return null;
+        }
+
+        CoordinateBinding binding = findBindingById(dataset.coordinateBindings(), variable.basisId());
+        if (binding == null) {
+            binding = dataset.coordinateBindings().stream()
+                .filter(candidate -> variable.dimensionNames().containsAll(candidate.horizontalDimensions()))
+                .findFirst()
+                .orElse(null);
+        }
+        return buildStructuredDomain(dataset, binding);
+    }
+
     private void updateDatasetPanels(ParsedDataset dataset) {
+        if (dataset == null) {
+            return;
+        }
         // 更新当前数据集名称标签。
         view.getDatasetLabel().setText(dataset.sourcePath().getFileName().toString());
         // 更新坐标变量标签。
         view.getCoordinateVariableLabel().setText("Coordinates: "
-            + Optional.ofNullable(dataset.xVariableName()).orElse("-")
+            + Optional.ofNullable(activeCoordinateBinding == null ? dataset.xVariableName() : activeCoordinateBinding.xName()).orElse("-")
             + " / "
-            + Optional.ofNullable(dataset.yVariableName()).orElse("-"));
+            + Optional.ofNullable(activeCoordinateBinding == null ? dataset.yVariableName() : activeCoordinateBinding.yName()).orElse("-"));
         // 更新连接变量标签。
         view.getConnectivityVariableLabel().setText("Connectivity: "
             + Optional.ofNullable(dataset.connectivityVariableName()).orElse("-"));
         // 拼接摘要信息文本。
         String summary = "File: " + dataset.sourcePath().toAbsolutePath() + System.lineSeparator()
-            + "Coordinates: " + Optional.ofNullable(dataset.xVariableName()).orElse("-")
-            + " / " + Optional.ofNullable(dataset.yVariableName()).orElse("-") + System.lineSeparator()
+            + "Coordinates: " + Optional.ofNullable(activeCoordinateBinding == null ? dataset.xVariableName() : activeCoordinateBinding.xName()).orElse("-")
+            + " / " + Optional.ofNullable(activeCoordinateBinding == null ? dataset.yVariableName() : activeCoordinateBinding.yName()).orElse("-") + System.lineSeparator()
             + "Connectivity: " + Optional.ofNullable(dataset.connectivityVariableName()).orElse("-") + System.lineSeparator()
-            + "Mesh: " + (dataset.hasMesh() ? dataset.mesh().nodeCount() + " nodes, " + dataset.mesh().triangleCount() + " triangles" : "Unavailable") + System.lineSeparator()
+            + "Geometry: " + geometrySummary(dataset, activeSpatialDomain == null ? dataset.spatialDomain() : activeSpatialDomain) + System.lineSeparator()
             + System.lineSeparator()
             + "Dimensions:" + System.lineSeparator()
             + dataset.dimensions().entrySet().stream()
@@ -643,7 +1026,9 @@ public final class MainController {
         // 根据变量是否可绘制、是否分层以及空间位置生成说明文本。
         String mode = currentVariable.plottable()
             ? (currentVariable.layered() ? "Layered " : "Single-layer ")
-                + (currentVariable.elementCentered() ? "element field" : "node field")
+                + (currentVariable.geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
+                    ? (currentVariable.cellCentered() ? "structured cell field" : "structured node field")
+                    : (currentVariable.elementCentered() ? "element field" : "node field"))
             : "Info only";
         // 更新变量细节标签。
         view.getVariableMetaLabel().setText("Variable details: "
@@ -710,8 +1095,8 @@ public final class MainController {
             return;
         }
         // 文件没有可用三角网时仅展示提示，不执行绘制。
-        if (!currentDataset.hasMesh()) {
-            renderPlaceholder("This file opened successfully, but it does not contain a plottable triangle mesh.");
+        if (activeSpatialDomain == null) {
+            renderPlaceholder("This file opened successfully, but it does not contain a plottable spatial domain.");
             return;
         }
         // 未选择变量时提示用户先选择变量。
@@ -746,7 +1131,7 @@ public final class MainController {
             // 在当前状态下决定是否启用流线叠加层。
             VelocityVariablePair flowPair = view.getFlowLineCheck().isSelected() ? activeVelocityPair : null;
             // 确保视口已适配当前网格范围。
-            viewportState.ensureFitted(currentDataset.mesh(), canvas.getWidth(), canvas.getHeight());
+            viewportState.ensureFitted(activeSpatialDomain, canvas.getWidth(), canvas.getHeight());
             // 生成新的渲染序号，供后台任务结果校验使用。
             long requestId = ++renderSequence;
             // 新一轮渲染开始时先清空旧的查询上下文，避免点击命中过期结果。
@@ -779,6 +1164,7 @@ public final class MainController {
         Canvas canvas = view.getRenderCanvas();
         ParsedDataset dataset = currentDataset;
         VariableInfo variable = currentVariable;
+        SpatialDomain spatialDomain = activeSpatialDomain;
         int width = Math.max(1, (int) Math.round(canvas.getWidth()));
         int height = Math.max(1, (int) Math.round(canvas.getHeight()));
         ViewportState.Snapshot snapshot = viewportState.snapshot();
@@ -788,17 +1174,29 @@ public final class MainController {
             @Override
             protected RenderFrame call() throws Exception {
                 // 先渲染为 BufferedImage，再转成 JavaFX 图像。
-                var bufferedImage = imageRenderer.render(
-                    width,
-                    height,
-                    dataset.mesh(),
-                    values,
-                    colorMap,
-                    displayRange,
-                    snapshot,
-                    variable.elementCentered(),
-                    variable.fillValue()
-                );
+                var bufferedImage = spatialDomain.kind() == SpatialDomain.Kind.STRUCTURED_GRID
+                    ? structuredImageRenderer.render(
+                        width,
+                        height,
+                        (StructuredGridDomain) spatialDomain,
+                        values,
+                        colorMap,
+                        displayRange,
+                        snapshot,
+                        variable.cellCentered(),
+                        variable.fillValue()
+                    )
+                    : imageRenderer.render(
+                        width,
+                        height,
+                        dataset.mesh(),
+                        values,
+                        colorMap,
+                        displayRange,
+                        snapshot,
+                        variable.elementCentered(),
+                        variable.fillValue()
+                    );
 
                 // 再按需准备波场箭头叠加层所需的数据。
                 WaveOverlayFrame waveOverlayFrame = null;
@@ -820,6 +1218,12 @@ public final class MainController {
                                 directionValues,
                                 wavelengthValues,
                                 wavelengthRange,
+                                wavePair.directionVariable().geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
+                                    ? resolveStructuredDomainForVariable(dataset, wavePair.directionVariable())
+                                    : null,
+                                wavePair.wavelengthVariable().geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
+                                    ? resolveStructuredDomainForVariable(dataset, wavePair.wavelengthVariable())
+                                    : null,
                                 snapshot
                             );
                         }
@@ -834,18 +1238,33 @@ public final class MainController {
                         int flowLayerIndex = flowPair.resolveLayerIndex(layerIndex);
                         double[] uValues = parser.readLayer(dataset, flowPair.eastwardVariable(), flowLayerIndex);
                         double[] vValues = parser.readLayer(dataset, flowPair.northwardVariable(), flowLayerIndex);
-                        List<FlowLineGenerator.FlowLine> lines = flowLineGenerator.generate(
-                            dataset.mesh(),
-                            uValues,
-                            vValues,
-                            snapshot,
-                            width,
-                            height,
-                            flowPair.elementCentered(),
-                            flowPair.eastwardVariable().fillValue(),
-                            flowPair.northwardVariable().fillValue(),
-                            flowLayerIndex
-                        );
+                        List<FlowLineGenerator.FlowLine> lines = flowPair.eastwardVariable().geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
+                            ? flowLineGenerator.generateStructured(
+                                resolveStructuredDomainForVariable(dataset, flowPair.eastwardVariable()),
+                                resolveStructuredDomainForVariable(dataset, flowPair.northwardVariable()),
+                                uValues,
+                                vValues,
+                                snapshot,
+                                width,
+                                height,
+                                flowPair.eastwardVariable().cellCentered(),
+                                flowPair.northwardVariable().cellCentered(),
+                                flowPair.eastwardVariable().fillValue(),
+                                flowPair.northwardVariable().fillValue(),
+                                flowLayerIndex
+                            )
+                            : flowLineGenerator.generate(
+                                dataset.mesh(),
+                                uValues,
+                                vValues,
+                                snapshot,
+                                width,
+                                height,
+                                flowPair.elementCentered(),
+                                flowPair.eastwardVariable().fillValue(),
+                                flowPair.northwardVariable().fillValue(),
+                                flowLayerIndex
+                            );
                         if (!lines.isEmpty()) {
                             flowOverlayFrame = new FlowOverlayFrame(
                                 flowPair,
@@ -885,10 +1304,11 @@ public final class MainController {
             // 缓存当前成功渲染的查询上下文，供点击单点查询复用。
             latestRenderQueryContext = new RenderQueryContext(
                 dataset,
+                spatialDomain,
                 variable,
                 layerIndex,
                 values.clone(),
-                variable.elementCentered(),
+                variable.cellCentered(),
                 variable.fillValue(),
                 snapshot
             );
@@ -962,20 +1382,39 @@ public final class MainController {
         }
 
         if (view.getWaveArrowCheck().isSelected() && latestWaveOverlayFrame != null) {
-            waveArrowOverlayRenderer.render(
-                canvas.getGraphicsContext2D(),
-                latestRenderQueryContext.dataset().mesh(),
-                latestWaveOverlayFrame.directionValues(),
-                latestWaveOverlayFrame.wavelengthValues(),
-                latestWaveOverlayFrame.snapshot(),
-                Math.max(1, (int) Math.round(canvas.getWidth())),
-                Math.max(1, (int) Math.round(canvas.getHeight())),
-                latestWaveOverlayFrame.pair().elementCentered(),
-                latestWaveOverlayFrame.pair().directionVariable().fillValue(),
-                latestWaveOverlayFrame.pair().wavelengthVariable().fillValue(),
-                latestWaveOverlayFrame.layerIndex(),
-                latestWaveOverlayFrame.wavelengthRange()
-            );
+            if (latestWaveOverlayFrame.directionDomain() != null && latestWaveOverlayFrame.wavelengthDomain() != null) {
+                waveArrowOverlayRenderer.renderStructured(
+                    canvas.getGraphicsContext2D(),
+                    latestWaveOverlayFrame.directionDomain(),
+                    latestWaveOverlayFrame.wavelengthDomain(),
+                    latestWaveOverlayFrame.directionValues(),
+                    latestWaveOverlayFrame.wavelengthValues(),
+                    latestWaveOverlayFrame.snapshot(),
+                    Math.max(1, (int) Math.round(canvas.getWidth())),
+                    Math.max(1, (int) Math.round(canvas.getHeight())),
+                    latestWaveOverlayFrame.pair().directionVariable().cellCentered(),
+                    latestWaveOverlayFrame.pair().wavelengthVariable().cellCentered(),
+                    latestWaveOverlayFrame.pair().directionVariable().fillValue(),
+                    latestWaveOverlayFrame.pair().wavelengthVariable().fillValue(),
+                    latestWaveOverlayFrame.layerIndex(),
+                    latestWaveOverlayFrame.wavelengthRange()
+                );
+            } else {
+                waveArrowOverlayRenderer.render(
+                    canvas.getGraphicsContext2D(),
+                    latestRenderQueryContext.dataset().mesh(),
+                    latestWaveOverlayFrame.directionValues(),
+                    latestWaveOverlayFrame.wavelengthValues(),
+                    latestWaveOverlayFrame.snapshot(),
+                    Math.max(1, (int) Math.round(canvas.getWidth())),
+                    Math.max(1, (int) Math.round(canvas.getHeight())),
+                    latestWaveOverlayFrame.pair().elementCentered(),
+                    latestWaveOverlayFrame.pair().directionVariable().fillValue(),
+                    latestWaveOverlayFrame.pair().wavelengthVariable().fillValue(),
+                    latestWaveOverlayFrame.layerIndex(),
+                    latestWaveOverlayFrame.wavelengthRange()
+                );
+            }
         }
 
         coastlineOverlayRenderer.render(
@@ -1102,6 +1541,49 @@ public final class MainController {
             return;
         }
 
+        // 标准格网走规则网格单点查询分支。
+        if (context.spatialDomain().kind() == SpatialDomain.Kind.STRUCTURED_GRID) {
+            StructuredPointQuery.Result result = StructuredPointQuery.query(
+                (StructuredGridDomain) context.spatialDomain(),
+                context.values(),
+                context.snapshot(),
+                screenX,
+                screenY,
+                context.cellCentered(),
+                context.fillValue(),
+                context.layerIndex()
+            );
+            if (!result.hit() || result.reason() == StructuredPointQuery.Reason.NO_HIT || result.reason() == StructuredPointQuery.Reason.UNSUPPORTED) {
+                setStatus("No structured-grid value at clicked location.");
+                return;
+            }
+            if (!result.hasValue()) {
+                setStatus("Clicked structured-grid sample contains no valid value.");
+                return;
+            }
+
+            StringBuilder text = new StringBuilder()
+                .append("Query ")
+                .append(context.variable().name());
+            if (context.variable().layered()) {
+                text.append(" layer ").append(result.layerIndex() + 1);
+            }
+            text.append(" at (")
+                .append(format(result.worldX()))
+                .append(", ")
+                .append(format(result.worldY()))
+                .append("): ")
+                .append(result.sampleType(context.cellCentered()))
+                .append(" [row=")
+                .append(result.rowIndex())
+                .append(", col=")
+                .append(result.columnIndex())
+                .append("], value=")
+                .append(format(result.value()));
+            setStatus(text.toString());
+            return;
+        }
+
         // 使用最近一次成功渲染的数据上下文执行点查询。
         MeshPointQuery.Result result = MeshPointQuery.query(
             context.dataset().mesh(),
@@ -1109,7 +1591,7 @@ public final class MainController {
             context.snapshot(),
             screenX,
             screenY,
-            context.elementCentered(),
+            context.cellCentered(),
             context.fillValue(),
             context.layerIndex()
         );
@@ -1246,12 +1728,26 @@ public final class MainController {
         stage.setTitle(title.toString());
     }
 
+    private String geometrySummary(ParsedDataset dataset, SpatialDomain spatialDomain) {
+        if (spatialDomain == null) {
+            return "Unavailable";
+        }
+        if (spatialDomain.kind() == SpatialDomain.Kind.TRIANGLE_MESH && dataset.hasMesh()) {
+            return dataset.mesh().nodeCount() + " nodes, " + dataset.mesh().triangleCount() + " triangles";
+        }
+        if (spatialDomain instanceof StructuredGridDomain structuredGridDomain) {
+            return "Structured grid " + structuredGridDomain.grid().width() + " x " + structuredGridDomain.grid().height();
+        }
+        return spatialDomain.kind().name();
+    }
+
     private record RenderQueryContext(
         ParsedDataset dataset,
+        SpatialDomain spatialDomain,
         VariableInfo variable,
         int layerIndex,
         double[] values,
-        boolean elementCentered,
+        boolean cellCentered,
         Double fillValue,
         ViewportState.Snapshot snapshot
     ) {
@@ -1271,6 +1767,8 @@ public final class MainController {
         double[] directionValues,
         double[] wavelengthValues,
         RangeStats wavelengthRange,
+        StructuredGridDomain directionDomain,
+        StructuredGridDomain wavelengthDomain,
         ViewportState.Snapshot snapshot
     ) {
     }

@@ -1,6 +1,8 @@
 package com.example.netcdfviewer.ui;
 
 import com.example.netcdfviewer.model.MeshData;
+import com.example.netcdfviewer.model.SpatialDomain;
+import com.example.netcdfviewer.model.TriangleDomain;
 
 /**
  * 视口状态对象。
@@ -19,33 +21,31 @@ public final class ViewportState {
     private boolean autoFit = true;
 
     public void ensureFitted(MeshData mesh, double width, double height) {
+        ensureFitted(mesh == null ? null : new TriangleDomain(mesh), width, height);
+    }
+
+    public void ensureFitted(SpatialDomain spatialDomain, double width, double height) {
         // 只有在自动适配开启或尚未初始化时，才重新执行适配。
         if (autoFit || !initialized) {
-            fit(mesh, width, height);
+            fit(spatialDomain, width, height);
         }
     }
 
     public void fit(MeshData mesh, double width, double height) {
-        // 如果网格或画布尺寸无效，则不做任何处理。
-        if (mesh == null || width <= 0 || height <= 0 || mesh.nodeCount() == 0) {
+        fit(mesh == null ? null : new TriangleDomain(mesh), width, height);
+    }
+
+    public void fit(SpatialDomain spatialDomain, double width, double height) {
+        // 如果空间域或画布尺寸无效，则不做任何处理。
+        if (spatialDomain == null || width <= 0 || height <= 0) {
             return;
         }
-
-        // 初始化网格范围边界。
-        double minX = Double.POSITIVE_INFINITY;
-        double maxX = Double.NEGATIVE_INFINITY;
-        double minY = Double.POSITIVE_INFINITY;
-        double maxY = Double.NEGATIVE_INFINITY;
-
-        // 扫描所有节点的 X 范围。
-        for (double value : mesh.x()) {
-            minX = Math.min(minX, value);
-            maxX = Math.max(maxX, value);
-        }
-        // 扫描所有节点的 Y 范围。
-        for (double value : mesh.y()) {
-            minY = Math.min(minY, value);
-            maxY = Math.max(maxY, value);
+        double minX = spatialDomain.minX();
+        double maxX = spatialDomain.maxX();
+        double minY = spatialDomain.minY();
+        double maxY = spatialDomain.maxY();
+        if (!Double.isFinite(minX) || !Double.isFinite(maxX) || !Double.isFinite(minY) || !Double.isFinite(maxY)) {
+            return;
         }
 
         // 计算网格在两个方向上的跨度，并提供最小保护值防止除零。

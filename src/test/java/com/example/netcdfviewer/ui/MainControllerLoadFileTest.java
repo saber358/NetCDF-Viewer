@@ -2,6 +2,7 @@ package com.example.netcdfviewer.ui;
 
 import com.example.netcdfviewer.AppMetadata;
 import com.example.netcdfviewer.io.ParsedDataset;
+import com.example.netcdfviewer.model.VariableInfo;
 import com.example.netcdfviewer.testsupport.SampleDatasetPaths;
 import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
@@ -59,6 +60,163 @@ class MainControllerLoadFileTest {
         });
 
         assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void controllerLoadsStructuredGridDatasetAndCompletesRender() throws Exception {
+        CountDownLatch initLatch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+        AtomicReference<MainView> viewRef = new AtomicReference<>();
+        AtomicReference<Stage> stageRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                Stage stage = new Stage();
+                MainView view = new MainView();
+                MainController controller = new MainController(stage, view);
+                controller.initialize();
+                stage.setScene(new Scene(view, 1440, 900));
+                stage.show();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("XTPY-wrf.nc"));
+
+                viewRef.set(view);
+                stageRef.set(stage);
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                initLatch.countDown();
+            }
+        });
+
+        assertTrue(initLatch.await(10, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+
+        waitForRender(viewRef.get());
+        closeStage(stageRef.get());
+
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+        assertTrue(viewRef.get().getDatasetLabel().getText().contains("XTPY-wrf.nc"));
+        assertFalse(viewRef.get().getOverlayLabel().isVisible());
+    }
+
+    @Test
+    void loadingStructuredDatasetPopulatesCoordinateControls() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("XTPY-roms.nc"));
+
+                assertTrue(view.getCoordinateSelectionBox().isVisible());
+                assertEquals("lon_rho", view.getCoordinateXCombo().getValue());
+                assertEquals("lat_rho", view.getCoordinateYCombo().getValue());
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void selectingStructuredVariableSwitchesToCompatibleCoordinateBinding() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("XTPY-roms.nc"));
+
+                VariableInfo velocity = view.getVariableList().getItems().stream()
+                    .filter(variable -> variable.name().equals("u"))
+                    .findFirst()
+                    .orElseThrow();
+                view.getVariableList().getSelectionModel().select(velocity);
+
+                assertEquals("lon_u", view.getCoordinateXCombo().getValue());
+                assertEquals("lat_u", view.getCoordinateYCombo().getValue());
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void clickQueryOnStructuredGridUpdatesStatusBar() throws Exception {
+        CountDownLatch initLatch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+        AtomicReference<MainController> controllerRef = new AtomicReference<>();
+        AtomicReference<MainView> viewRef = new AtomicReference<>();
+        AtomicReference<Stage> stageRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                Stage stage = new Stage();
+                MainView view = new MainView();
+                MainController controller = new MainController(stage, view);
+                controller.initialize();
+                stage.setScene(new Scene(view, 1440, 900));
+                stage.show();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("XTPY-wrf.nc"));
+
+                controllerRef.set(controller);
+                viewRef.set(view);
+                stageRef.set(stage);
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                initLatch.countDown();
+            }
+        });
+
+        assertTrue(initLatch.await(10, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+
+        waitForRender(viewRef.get());
+        clickStructuredGridCenter(controllerRef.get(), viewRef.get(), errorRef);
+        waitForStatus(viewRef.get(), text -> text.contains("Query") && text.contains("value="));
+        closeStage(stageRef.get());
+
         if (errorRef.get() != null) {
             throw new AssertionError(errorRef.get());
         }
@@ -721,6 +879,64 @@ class MainControllerLoadFileTest {
         assertFalse(viewRef.get().getOverlayLabel().isVisible());
     }
 
+    @Test
+    void enablingFlowLineOverlayOnStructuredDatasetKeepsRenderPipelineAlive() throws Exception {
+        CountDownLatch initLatch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+        AtomicReference<MainView> viewRef = new AtomicReference<>();
+        AtomicReference<Stage> stageRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                Stage stage = new Stage();
+                MainView view = new MainView();
+                MainController controller = new MainController(stage, view);
+                controller.initialize();
+                stage.setScene(new Scene(view, 1440, 900));
+                stage.show();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("XTPY-roms.nc"));
+
+                viewRef.set(view);
+                stageRef.set(stage);
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                initLatch.countDown();
+            }
+        });
+
+        assertTrue(initLatch.await(10, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+
+        waitForRender(viewRef.get());
+
+        CountDownLatch toggleLatch = new CountDownLatch(1);
+        Platform.runLater(() -> {
+            try {
+                viewRef.get().getFlowLineCheck().setSelected(true);
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                toggleLatch.countDown();
+            }
+        });
+        assertTrue(toggleLatch.await(5, TimeUnit.SECONDS));
+
+        waitForRender(viewRef.get());
+        closeStage(stageRef.get());
+
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+        assertTrue(viewRef.get().getFlowLineCheck().isSelected());
+        assertFalse(viewRef.get().getOverlayLabel().isVisible());
+    }
+
     private static void waitForRender(MainView view) throws Exception {
         AtomicBoolean ready = new AtomicBoolean(false);
         long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
@@ -792,6 +1008,35 @@ class MainControllerLoadFileTest {
                 double centroidX = (dataset.mesh().x()[triangle[0]] + dataset.mesh().x()[triangle[1]] + dataset.mesh().x()[triangle[2]]) / 3.0;
                 double centroidY = (dataset.mesh().y()[triangle[0]] + dataset.mesh().y()[triangle[1]] + dataset.mesh().y()[triangle[2]]) / 3.0;
                 clickAt(view, viewportState.screenX(centroidX), viewportState.screenY(centroidY), errorRef);
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                clickLatch.countDown();
+            }
+        });
+        assertTrue(clickLatch.await(5, TimeUnit.SECONDS));
+    }
+
+    private static void clickStructuredGridCenter(MainController controller, MainView view, AtomicReference<Throwable> errorRef) throws Exception {
+        CountDownLatch clickLatch = new CountDownLatch(1);
+        Platform.runLater(() -> {
+            try {
+                Field domainField = MainController.class.getDeclaredField("activeSpatialDomain");
+                domainField.setAccessible(true);
+                Object domainObject = domainField.get(controller);
+
+                Field viewportField = MainController.class.getDeclaredField("viewportState");
+                viewportField.setAccessible(true);
+                ViewportState viewportState = (ViewportState) viewportField.get(controller);
+
+                Method minX = domainObject.getClass().getMethod("minX");
+                Method maxX = domainObject.getClass().getMethod("maxX");
+                Method minY = domainObject.getClass().getMethod("minY");
+                Method maxY = domainObject.getClass().getMethod("maxY");
+
+                double worldX = (((double) minX.invoke(domainObject)) + ((double) maxX.invoke(domainObject))) * 0.5;
+                double worldY = (((double) minY.invoke(domainObject)) + ((double) maxY.invoke(domainObject))) * 0.5;
+                clickAt(view, viewportState.screenX(worldX), viewportState.screenY(worldY), errorRef);
             } catch (Throwable throwable) {
                 errorRef.set(throwable);
             } finally {

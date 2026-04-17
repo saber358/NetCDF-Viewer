@@ -1,6 +1,9 @@
 package com.example.netcdfviewer.render;
 
+import com.example.netcdfviewer.model.CoordinateBinding;
 import com.example.netcdfviewer.model.MeshData;
+import com.example.netcdfviewer.model.StructuredGridData;
+import com.example.netcdfviewer.model.StructuredGridDomain;
 import com.example.netcdfviewer.ui.ViewportState;
 import org.junit.jupiter.api.Test;
 
@@ -89,5 +92,58 @@ class FlowLineGeneratorTest {
         assertTrue(smoothed.get(0).x() == 0.0 && smoothed.get(0).y() == 0.0);
         assertTrue(smoothed.get(smoothed.size() - 1).x() == 90.0
             && smoothed.get(smoothed.size() - 1).y() == 0.0);
+    }
+
+    @Test
+    void generateStructuredBuildsFlowLinesForUniformVectorField() {
+        StructuredGridDomain uDomain = new StructuredGridDomain(
+            new StructuredGridData(
+                new CoordinateBinding("binding:lon_u:lat_u", "lon_u", "lat_u", List.of("x_u", "y_u"), false),
+                new double[]{0.0, 1.0, 2.0, 3.0},
+                new double[]{0.0, 1.0, 2.0, 3.0},
+                null,
+                null,
+                4,
+                4
+            ),
+            new CoordinateBinding("binding:lon_u:lat_u", "lon_u", "lat_u", List.of("x_u", "y_u"), false)
+        );
+        StructuredGridDomain vDomain = new StructuredGridDomain(
+            new StructuredGridData(
+                new CoordinateBinding("binding:lon_v:lat_v", "lon_v", "lat_v", List.of("x_v", "y_v"), false),
+                new double[]{0.0, 1.0, 2.0, 3.0},
+                new double[]{0.0, 1.0, 2.0, 3.0},
+                null,
+                null,
+                4,
+                4
+            ),
+            new CoordinateBinding("binding:lon_v:lat_v", "lon_v", "lat_v", List.of("x_v", "y_v"), false)
+        );
+
+        List<FlowLineGenerator.FlowLine> lines = generator.generateStructured(
+            uDomain,
+            vDomain,
+            new double[16],
+            filled(16, 1.0),
+            new ViewportState.Snapshot(40.0, 0.0, 120.0),
+            120,
+            120,
+            false,
+            false,
+            null,
+            null,
+            0
+        );
+
+        assertFalse(lines.isEmpty());
+    }
+
+    private static double[] filled(int count, double value) {
+        double[] values = new double[count];
+        for (int index = 0; index < count; index++) {
+            values[index] = value;
+        }
+        return values;
     }
 }
