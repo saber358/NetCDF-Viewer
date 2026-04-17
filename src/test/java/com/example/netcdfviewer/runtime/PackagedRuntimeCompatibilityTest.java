@@ -1,5 +1,6 @@
 package com.example.netcdfviewer.runtime;
 
+import com.example.netcdfviewer.testsupport.SampleDatasetPaths;
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
@@ -16,7 +17,7 @@ class PackagedRuntimeCompatibilityTest {
     void parserWorksUnderPackagedRuntimeModuleSet() throws Exception {
         Process process = packagedProcess(
             ParserProbeMain.class.getName(),
-            Path.of("HBHQY.nc").toAbsolutePath().toString()
+            SampleDatasetPaths.resolve("HBHQY.nc").toString()
         );
         String output = readOutput(process);
         int exitCode = process.waitFor();
@@ -32,7 +33,7 @@ class PackagedRuntimeCompatibilityTest {
 
         Process process = packagedProcess(
             ExportProbeMain.class.getName(),
-            Path.of("ydw.nc").toAbsolutePath().toString(),
+            SampleDatasetPaths.resolve("ydw.nc").toString(),
             outputFile.toString()
         );
         String output = readOutput(process);

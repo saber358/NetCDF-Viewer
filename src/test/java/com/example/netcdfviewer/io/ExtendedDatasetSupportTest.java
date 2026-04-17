@@ -1,6 +1,7 @@
 package com.example.netcdfviewer.io;
 
 import com.example.netcdfviewer.model.VariableInfo;
+import com.example.netcdfviewer.testsupport.SampleDatasetPaths;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -14,7 +15,7 @@ class ExtendedDatasetSupportTest {
     @Test
     void hbhqyExposesNodeLayerNodeTimeAndElementTimeVariables() throws Exception {
         NetcdfDatasetParser parser = new NetcdfDatasetParser();
-        ParsedDataset dataset = parser.open(Path.of("HBHQY.nc"));
+        ParsedDataset dataset = parser.open(SampleDatasetPaths.resolve("HBHQY.nc"));
 
         Set<String> plottableNames = dataset.plottableVariables().stream()
             .map(VariableInfo::name)
@@ -32,7 +33,7 @@ class ExtendedDatasetSupportTest {
     @Test
     void ydwTempReadsAsLayeredNodeField() throws Exception {
         NetcdfDatasetParser parser = new NetcdfDatasetParser();
-        ParsedDataset dataset = parser.open(Path.of("ydw.nc"));
+        ParsedDataset dataset = parser.open(SampleDatasetPaths.resolve("ydw.nc"));
         VariableInfo temp = dataset.plottableVariables().stream()
             .filter(variable -> variable.name().equals("temp"))
             .findFirst()
@@ -47,7 +48,7 @@ class ExtendedDatasetSupportTest {
     @Test
     void hbhqyElementTimeFieldReadsAgainstTriangleCount() throws Exception {
         NetcdfDatasetParser parser = new NetcdfDatasetParser();
-        ParsedDataset dataset = parser.open(Path.of("HBHQY.nc"));
+        ParsedDataset dataset = parser.open(SampleDatasetPaths.resolve("HBHQY.nc"));
         VariableInfo wind = dataset.plottableVariables().stream()
             .filter(variable -> variable.name().equals("uwind_speed"))
             .findFirst()
@@ -61,8 +62,8 @@ class ExtendedDatasetSupportTest {
     @Test
     void hydAndDsdSupportTriConnectivityStoredAsDouble() throws Exception {
         NetcdfDatasetParser parser = new NetcdfDatasetParser();
-        ParsedDataset hyd = parser.open(Path.of("HYD.nc"));
-        ParsedDataset dsd = parser.open(Path.of("DSD1211.nc"));
+        ParsedDataset hyd = parser.open(SampleDatasetPaths.resolve("HYD.nc"));
+        ParsedDataset dsd = parser.open(SampleDatasetPaths.resolve("DSD1211.nc"));
 
         assertTrue(hyd.hasMesh(), "HYD.nc should expose a mesh from Tri.");
         assertTrue(dsd.hasMesh(), "DSD1211.nc should expose a mesh from Tri.");
@@ -73,7 +74,7 @@ class ExtendedDatasetSupportTest {
     @Test
     void nanhaiDoesNotExposeCoordinateLikeCenterAxesAsAttributes() throws Exception {
         NetcdfDatasetParser parser = new NetcdfDatasetParser();
-        ParsedDataset dataset = parser.open(Path.of("nanhai.nc"));
+        ParsedDataset dataset = parser.open(SampleDatasetPaths.resolve("nanhai.nc"));
 
         Set<String> plottableNames = dataset.plottableVariables().stream()
             .map(VariableInfo::name)
@@ -92,7 +93,7 @@ class ExtendedDatasetSupportTest {
     @Test
     void nanhaiFallsBackToLonLatWhenXYAxesAreDegenerate() throws Exception {
         NetcdfDatasetParser parser = new NetcdfDatasetParser();
-        ParsedDataset dataset = parser.open(Path.of("nanhai.nc"));
+        ParsedDataset dataset = parser.open(SampleDatasetPaths.resolve("nanhai.nc"));
 
         assertEquals("lon", dataset.xVariableName());
         assertEquals("lat", dataset.yVariableName());

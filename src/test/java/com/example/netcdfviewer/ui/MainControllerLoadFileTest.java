@@ -2,6 +2,7 @@ package com.example.netcdfviewer.ui;
 
 import com.example.netcdfviewer.AppMetadata;
 import com.example.netcdfviewer.io.ParsedDataset;
+import com.example.netcdfviewer.testsupport.SampleDatasetPaths;
 import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
 import javafx.scene.Scene;
@@ -44,7 +45,7 @@ class MainControllerLoadFileTest {
 
                 Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
                 openFile.setAccessible(true);
-                openFile.invoke(controller, Path.of("ydw.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("ydw.nc"));
 
                 assertTrue(view.getDatasetLabel().getText().contains("ydw.nc"));
                 assertFalse(view.getVariableList().getItems().isEmpty());
@@ -86,8 +87,8 @@ class MainControllerLoadFileTest {
 
                 Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
                 openFile.setAccessible(true);
-                openFile.invoke(controller, Path.of("ydw.nc"));
-                openFile.invoke(controller, Path.of("HBHQY.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("ydw.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("HBHQY.nc"));
 
                 assertEquals(2, view.getDatasetList().getItems().size());
                 assertTrue(view.getDatasetLabel().getText().contains("HBHQY.nc"));
@@ -122,8 +123,8 @@ class MainControllerLoadFileTest {
 
                 Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
                 openFile.setAccessible(true);
-                openFile.invoke(controller, Path.of("ydw.nc"));
-                openFile.invoke(controller, Path.of("HBHQY.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("ydw.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("HBHQY.nc"));
 
                 view.getRemoveDatasetButton().fire();
 
@@ -155,8 +156,8 @@ class MainControllerLoadFileTest {
 
                 Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
                 openFile.setAccessible(true);
-                openFile.invoke(controller, Path.of("ydw.nc"));
-                openFile.invoke(controller, Path.of("ydw.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("ydw.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("ydw.nc"));
 
                 assertEquals(1, view.getDatasetList().getItems().size());
                 assertTrue(view.getStatusLabel().getText().contains("already loaded"));
@@ -220,13 +221,13 @@ class MainControllerLoadFileTest {
 
                 Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
                 openFile.setAccessible(true);
-                openFile.invoke(controller, Path.of("ydw.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("ydw.nc"));
 
                 Method loadCoastline = MainController.class.getDeclaredMethod("loadCoastline", Path.class);
                 loadCoastline.setAccessible(true);
                 loadCoastline.invoke(controller, overlayFile);
 
-                openFile.invoke(controller, Path.of("HBHQY.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("HBHQY.nc"));
 
                 Field overlayField = MainController.class.getDeclaredField("currentOverlay");
                 overlayField.setAccessible(true);
@@ -365,7 +366,7 @@ class MainControllerLoadFileTest {
 
                 Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
                 openFile.setAccessible(true);
-                openFile.invoke(controller, Path.of("ydw.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("ydw.nc"));
 
                 controllerRef.set(controller);
                 viewRef.set(view);
@@ -410,7 +411,7 @@ class MainControllerLoadFileTest {
 
                 Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
                 openFile.setAccessible(true);
-                openFile.invoke(controller, Path.of("ydw.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("ydw.nc"));
 
                 viewRef.set(view);
                 stageRef.set(stage);
@@ -455,7 +456,7 @@ class MainControllerLoadFileTest {
 
                 Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
                 openFile.setAccessible(true);
-                openFile.invoke(controller, Path.of("ydw.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("ydw.nc"));
 
                 viewRef.set(view);
                 stageRef.set(stage);

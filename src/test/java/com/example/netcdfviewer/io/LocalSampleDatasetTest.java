@@ -1,6 +1,7 @@
 package com.example.netcdfviewer.io;
 
 import com.example.netcdfviewer.model.VariableInfo;
+import com.example.netcdfviewer.testsupport.SampleDatasetPaths;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -15,7 +16,9 @@ class LocalSampleDatasetTest {
     @Test
     void atLeastOneLocalNcFileSupportsVisualization() throws IOException {
         NetcdfDatasetParser parser = new NetcdfDatasetParser();
-        List<Path> files = LocalSampleDatasetSupport.requireLocalNcFilesOrSkip(Path.of("."));
+        List<Path> files = LocalSampleDatasetSupport.requireLocalNcFilesOrSkip(
+            SampleDatasetPaths.findNearestDirectoryContainingNcFiles(Path.of("."))
+        );
 
         List<String> diagnostics = new ArrayList<>();
 
@@ -46,7 +49,9 @@ class LocalSampleDatasetTest {
     @Test
     void reportWhetherLocalNcFileExposesLayeredScalarVariable() throws IOException {
         NetcdfDatasetParser parser = new NetcdfDatasetParser();
-        List<Path> files = LocalSampleDatasetSupport.requireLocalNcFilesOrSkip(Path.of("."));
+        List<Path> files = LocalSampleDatasetSupport.requireLocalNcFilesOrSkip(
+            SampleDatasetPaths.findNearestDirectoryContainingNcFiles(Path.of("."))
+        );
 
         List<String> diagnostics = new ArrayList<>();
 

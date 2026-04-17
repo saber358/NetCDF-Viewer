@@ -1,6 +1,7 @@
 package com.example.netcdfviewer.ui;
 
 import com.example.netcdfviewer.model.VariableInfo;
+import com.example.netcdfviewer.testsupport.SampleDatasetPaths;
 import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
 import javafx.scene.Scene;
@@ -44,7 +45,7 @@ class NanhaiRenderingTest {
 
                 Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
                 openFile.setAccessible(true);
-                openFile.invoke(controller, Path.of("nanhai.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("nanhai.nc"));
 
                 VariableInfo temp = view.getVariableList().getItems().stream()
                     .filter(variable -> variable.name().equals("temp"))

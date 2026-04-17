@@ -1,5 +1,6 @@
 package com.example.netcdfviewer.ui;
 
+import com.example.netcdfviewer.testsupport.SampleDatasetPaths;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Platform;
@@ -45,7 +46,7 @@ class MainViewLayoutStabilityTest {
 
                 Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
                 openFile.setAccessible(true);
-                openFile.invoke(controller, Path.of("ydw.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("ydw.nc"));
 
                 Timeline timeline = new Timeline();
                 for (int index = 0; index < 10; index++) {
