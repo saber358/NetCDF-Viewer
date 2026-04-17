@@ -4,6 +4,7 @@ import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.paint.Color;
 
 import java.util.List;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public final class FlowLineOverlayRenderer {
@@ -27,14 +28,18 @@ public final class FlowLineOverlayRenderer {
      *   2) 亮带位置按 phase 在总长度上循环
      */
     public void render(GraphicsContext graphics, List<FlowLineGenerator.FlowLine> lines, double phase) {
-        logger.info(() -> "开始绘制流线叠加层, lineCount="
-            + (lines == null ? 0 : lines.size())
-            + ", phase="
-            + phase);
+        if (logger.isLoggable(Level.FINE)) {
+            logger.fine("开始绘制流线叠加层, lineCount="
+                + (lines == null ? 0 : lines.size())
+                + ", phase="
+                + phase);
+        }
 
         // 1.1 输入为空时直接返回，避免无意义绘制。
         if (graphics == null || lines == null || lines.isEmpty()) {
-            logger.info("流线叠加层绘制结束, renderedLineCount=0");
+            if (logger.isLoggable(Level.FINE)) {
+                logger.fine("流线叠加层绘制结束, renderedLineCount=0");
+            }
             return;
         }
 
@@ -57,7 +62,9 @@ public final class FlowLineOverlayRenderer {
             graphics.restore();
         }
 
-        logger.info(() -> "流线叠加层绘制结束, renderedLineCount=" + lines.size());
+        if (logger.isLoggable(Level.FINE)) {
+            logger.fine("流线叠加层绘制结束, renderedLineCount=" + lines.size());
+        }
     }
 
     /*

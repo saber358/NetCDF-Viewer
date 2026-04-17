@@ -3,6 +3,7 @@ package com.example.netcdfviewer.render;
 import com.example.netcdfviewer.model.MeshData;
 import com.example.netcdfviewer.ui.ViewportState;
 
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public final class FlowVectorQuery {
@@ -37,12 +38,14 @@ public final class FlowVectorQuery {
         Double vFillValue,
         int layerIndex
     ) {
-        logger.info(() -> "开始查询流场向量, screenX="
-            + screenX
-            + ", screenY="
-            + screenY
-            + ", layerIndex="
-            + layerIndex);
+        if (logger.isLoggable(Level.FINE)) {
+            logger.fine("开始查询流场向量, screenX="
+                + screenX
+                + ", screenY="
+                + screenY
+                + ", layerIndex="
+                + layerIndex);
+        }
 
         // 1.1 将屏幕坐标反算到世界坐标。
         double worldX = snapshot.worldX(screenX);
@@ -62,11 +65,15 @@ public final class FlowVectorQuery {
                 double u = triangleIndex < uValues.length ? uValues[triangleIndex] : Double.NaN;
                 double v = triangleIndex < vValues.length ? vValues[triangleIndex] : Double.NaN;
                 if (!RenderMath.isRenderableValue(u, uFillValue) || !RenderMath.isRenderableValue(v, vFillValue)) {
-                    logger.info(() -> "流场向量查询结束, triangleIndex=" + resolvedTriangleIndex + ", reason=INVALID_VALUE");
+                    if (logger.isLoggable(Level.FINE)) {
+                        logger.fine("流场向量查询结束, triangleIndex=" + resolvedTriangleIndex + ", reason=INVALID_VALUE");
+                    }
                     return new Result(true, worldX, worldY, triangleIndex, Double.NaN, Double.NaN, Double.NaN, layerIndex, Reason.INVALID_VALUE);
                 }
                 double speed = Math.hypot(u, v);
-                logger.info(() -> "流场向量查询结束, triangleIndex=" + resolvedTriangleIndex + ", reason=HIT, speed=" + speed);
+                if (logger.isLoggable(Level.FINE)) {
+                    logger.fine("流场向量查询结束, triangleIndex=" + resolvedTriangleIndex + ", reason=HIT, speed=" + speed);
+                }
                 return new Result(true, worldX, worldY, triangleIndex, u, v, speed, layerIndex, Reason.HIT);
             }
 
@@ -83,18 +90,24 @@ public final class FlowVectorQuery {
                 || !RenderMath.isRenderableValue(v0, vFillValue)
                 || !RenderMath.isRenderableValue(v1, vFillValue)
                 || !RenderMath.isRenderableValue(v2, vFillValue)) {
-                logger.info(() -> "流场向量查询结束, triangleIndex=" + resolvedTriangleIndex + ", reason=INVALID_VALUE");
+                if (logger.isLoggable(Level.FINE)) {
+                    logger.fine("流场向量查询结束, triangleIndex=" + resolvedTriangleIndex + ", reason=INVALID_VALUE");
+                }
                 return new Result(true, worldX, worldY, triangleIndex, Double.NaN, Double.NaN, Double.NaN, layerIndex, Reason.INVALID_VALUE);
             }
 
             double u = barycentric.w1() * u0 + barycentric.w2() * u1 + barycentric.w3() * u2;
             double v = barycentric.w1() * v0 + barycentric.w2() * v1 + barycentric.w3() * v2;
             double speed = Math.hypot(u, v);
-            logger.info(() -> "流场向量查询结束, triangleIndex=" + resolvedTriangleIndex + ", reason=HIT, speed=" + speed);
+            if (logger.isLoggable(Level.FINE)) {
+                logger.fine("流场向量查询结束, triangleIndex=" + resolvedTriangleIndex + ", reason=HIT, speed=" + speed);
+            }
             return new Result(true, worldX, worldY, triangleIndex, u, v, speed, layerIndex, Reason.HIT);
         }
 
-        logger.info("流场向量查询结束, reason=NO_HIT");
+        if (logger.isLoggable(Level.FINE)) {
+            logger.fine("流场向量查询结束, reason=NO_HIT");
+        }
         return new Result(false, worldX, worldY, -1, Double.NaN, Double.NaN, Double.NaN, layerIndex, Reason.NO_HIT);
     }
 

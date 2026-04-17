@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public final class FlowLineGenerator {
@@ -144,7 +145,9 @@ public final class FlowLineGenerator {
         double seedScreenX,
         double seedScreenY
     ) {
-        logger.info(() -> "开始从种子构造流线, seedScreenX=" + seedScreenX + ", seedScreenY=" + seedScreenY);
+        if (logger.isLoggable(Level.FINE)) {
+            logger.fine("开始从种子构造流线, seedScreenX=" + seedScreenX + ", seedScreenY=" + seedScreenY);
+        }
 
         // 2.1 先沿速度方向和反方向分别积分。
         List<FlowPoint> backward = integrateDirection(
@@ -187,12 +190,16 @@ public final class FlowLineGenerator {
 
         // 2.3 点太少时直接视为无效流线。
         if (points.size() < 2) {
-            logger.info("种子流线构造结束, pointCount=0");
+            if (logger.isLoggable(Level.FINE)) {
+                logger.fine("种子流线构造结束, pointCount=0");
+            }
             return null;
         }
 
         FlowLine line = FlowLine.fromPoints(points);
-        logger.info(() -> "种子流线构造结束, pointCount=" + line.points().size() + ", totalLength=" + line.totalLength());
+        if (logger.isLoggable(Level.FINE)) {
+            logger.fine("种子流线构造结束, pointCount=" + line.points().size() + ", totalLength=" + line.totalLength());
+        }
         return line;
     }
 
@@ -221,12 +228,14 @@ public final class FlowLineGenerator {
         double seedScreenY,
         double direction
     ) {
-        logger.info(() -> "开始积分单向流线, seedScreenX="
-            + seedScreenX
-            + ", seedScreenY="
-            + seedScreenY
-            + ", direction="
-            + direction);
+        if (logger.isLoggable(Level.FINE)) {
+            logger.fine("开始积分单向流线, seedScreenX="
+                + seedScreenX
+                + ", seedScreenY="
+                + seedScreenY
+                + ", direction="
+                + direction);
+        }
 
         // 3.1 固定屏幕步长按当前缩放换算成世界步长。
         double stepWorld = STEP_PIXELS / snapshot.scale();
@@ -272,7 +281,9 @@ public final class FlowLineGenerator {
             worldY = nextWorldY;
         }
 
-        logger.info(() -> "单向流线积分结束, pointCount=" + points.size() + ", direction=" + direction);
+        if (logger.isLoggable(Level.FINE)) {
+            logger.fine("单向流线积分结束, pointCount=" + points.size() + ", direction=" + direction);
+        }
         return points;
     }
 
