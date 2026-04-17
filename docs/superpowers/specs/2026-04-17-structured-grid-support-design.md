@@ -50,6 +50,7 @@ The design decisions confirmed during brainstorming are:
 - variable names and dimension names must not be hardcoded as the main matching rule
 - users may manually choose horizontal coordinates when auto-detection finds multiple valid candidates
 - manual coordinate choice must be constrained to valid horizontal-coordinate candidates only
+- triangle-mesh datasets do not expose manual X/Y coordinate selection
 - all existing end-user features should continue to work for structured grids through the same controller workflow
 
 ## Problem Statement
@@ -145,10 +146,16 @@ Fields:
 Rules:
 
 - `Auto` is the default
+- the coordinate section is shown only for structured-grid datasets
 - the manual selectors are enabled only when more than one valid horizontal coordinate pair exists
 - the selectors list only valid horizontal-coordinate candidates
 - depth/time/other business dimensions are never presented as X/Y choices
 - coordinate choice is scoped to the active dataset
+
+For triangle-mesh datasets:
+
+- no manual X/Y coordinate selection is shown
+- the existing automatic mesh workflow remains unchanged
 
 This gives users control without letting them produce invalid plots.
 
