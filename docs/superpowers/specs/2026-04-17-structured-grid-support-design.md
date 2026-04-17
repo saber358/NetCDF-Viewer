@@ -4,6 +4,10 @@
 
 Upgrade the application so it can load and visualize standard-grid NetCDF datasets in addition to the existing unstructured triangle-mesh datasets.
 
+Target release:
+
+- `1.1.0`
+
 The upgraded system must preserve the current feature set:
 
 - scalar planar rendering
