@@ -98,6 +98,8 @@ public final class MainView extends BorderPane {
     private final ComboBox<String> colorMapCombo = new ComboBox<>();
     // 自动范围复选框。
     private final CheckBox autoRangeCheck = new CheckBox("Auto range");
+    // 流线叠加开关。
+    private final CheckBox flowLineCheck = new CheckBox("Flow lines");
     // 波场箭头叠加开关。
     private final CheckBox waveArrowCheck = new CheckBox("Wave arrows");
     // 手动最小值输入框。
@@ -197,6 +199,7 @@ public final class MainView extends BorderPane {
         depthSlider.setShowTickLabels(false);
 
         autoRangeCheck.setSelected(true);
+        flowLineCheck.setDisable(true);
         waveArrowCheck.setDisable(true);
         minField.setPromptText("Min");
         maxField.setPromptText("Max");
@@ -210,6 +213,7 @@ public final class MainView extends BorderPane {
             connectivityVariableLabel,
             variableMetaLabel,
             visualizeButton,
+            flowLineCheck,
             waveArrowCheck,
             colorMapLabel,
             colorMapCombo,
@@ -387,6 +391,10 @@ public final class MainView extends BorderPane {
 
     public CheckBox getAutoRangeCheck() {
         return autoRangeCheck;
+    }
+
+    public CheckBox getFlowLineCheck() {
+        return flowLineCheck;
     }
 
     public CheckBox getWaveArrowCheck() {

@@ -3,8 +3,10 @@ package com.example.netcdfviewer.ui;
 import com.example.netcdfviewer.AppMetadata;
 import com.example.netcdfviewer.io.NetcdfDatasetParser;
 import com.example.netcdfviewer.io.ParsedDataset;
+import com.example.netcdfviewer.io.VelocityVariablePairFinder;
 import com.example.netcdfviewer.io.WaveVariablePairFinder;
 import com.example.netcdfviewer.model.VariableInfo;
+import com.example.netcdfviewer.model.VelocityVariablePair;
 import com.example.netcdfviewer.model.WaveVariablePair;
 import com.example.netcdfviewer.overlay.BuiltInCoastline;
 import com.example.netcdfviewer.overlay.CoastlineOverlay;
@@ -12,11 +14,16 @@ import com.example.netcdfviewer.overlay.CoastlineOverlayLoader;
 import com.example.netcdfviewer.overlay.CoastlineOverlayRenderer;
 import com.example.netcdfviewer.render.ColorMap;
 import com.example.netcdfviewer.render.ColorMaps;
+import com.example.netcdfviewer.render.FlowLineGenerator;
+import com.example.netcdfviewer.render.FlowLineOverlayRenderer;
 import com.example.netcdfviewer.render.MeshPointQuery;
 import com.example.netcdfviewer.render.RangeStats;
 import com.example.netcdfviewer.render.RenderMath;
 import com.example.netcdfviewer.render.TriangleImageRenderer;
 import com.example.netcdfviewer.render.WaveArrowOverlayRenderer;
+import javafx.animation.Animation;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.concurrent.Task;
@@ -33,11 +40,13 @@ import javafx.scene.input.KeyCombination;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.TransferMode;
 import javafx.stage.Stage;
+import javafx.util.Duration;
 
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -56,10 +65,16 @@ public final class MainController {
     private final NetcdfDatasetParser parser = new NetcdfDatasetParser();
     // 波场变量配对识别器。
     private final WaveVariablePairFinder waveVariablePairFinder = new WaveVariablePairFinder();
+    // 流场速度变量配对识别器。
+    private final VelocityVariablePairFinder velocityVariablePairFinder = new VelocityVariablePairFinder();
     // 后台离屏渲染器。
     private final TriangleImageRenderer imageRenderer = new TriangleImageRenderer();
+    // 流线采样器。
+    private final FlowLineGenerator flowLineGenerator = new FlowLineGenerator();
     // 波场箭头叠加绘制器。
     private final WaveArrowOverlayRenderer waveArrowOverlayRenderer = new WaveArrowOverlayRenderer();
+    // 流线叠加绘制器。
+    private final FlowLineOverlayRenderer flowLineOverlayRenderer = new FlowLineOverlayRenderer();
     // 海岸线叠加绘制器。
     private final CoastlineOverlayRenderer coastlineOverlayRenderer = new CoastlineOverlayRenderer();
     // 当前视口状态，包含缩放和平移信息。
@@ -86,6 +101,18 @@ public final class MainController {
     private CoastlineOverlay currentOverlay;
     // 当前数据集识别出的波场变量配对。
     private WaveVariablePair activeWavePair;
+    // 当前数据集识别出的流场速度变量配对。
+    private VelocityVariablePair activeVelocityPair;
+    // 最近一次成功渲染的底图。
+    private WritableImage latestBaseImage;
+    // 最近一次成功渲染的波场箭头叠加数据。
+    private WaveOverlayFrame latestWaveOverlayFrame;
+    // 最近一次成功渲染的流线叠加数据。
+    private FlowOverlayFrame latestFlowOverlayFrame;
+    // 流线亮带动画时间线。
+    private Timeline flowAnimationTimeline;
+    // 当前流线亮带动画相位。
+    private double flowAnimationPhase;
     // 判定点击与拖拽的像素阈值。
     private static final double CLICK_TOLERANCE = 4.0;
 
@@ -123,6 +150,8 @@ public final class MainController {
         view.getApplyRangeButton().setDisable(true);
         view.getMinField().setDisable(true);
         view.getMaxField().setDisable(true);
+        view.getFlowLineCheck().setDisable(true);
+        view.getFlowLineCheck().setSelected(false);
         view.getWaveArrowCheck().setDisable(true);
         view.getWaveArrowCheck().setSelected(false);
         view.getRemoveDatasetButton().setDisable(true);
@@ -216,6 +245,15 @@ public final class MainController {
         });
         // 波场箭头开关变化时重绘当前视图。
         view.getWaveArrowCheck().selectedProperty().addListener((obs, oldValue, newValue) -> renderCurrentSelection());
+        // 流线开关开启时重新准备叠加数据，关闭时直接用缓存底图重绘。
+        view.getFlowLineCheck().selectedProperty().addListener((obs, oldValue, newValue) -> {
+            if (newValue) {
+                renderCurrentSelection();
+                return;
+            }
+            stopFlowAnimation();
+            redrawCurrentView();
+        });
         // 手动应用范围时重新渲染。
         view.getApplyRangeButton().setOnAction(event -> renderCurrentSelection());
     }
@@ -405,7 +443,13 @@ public final class MainController {
         currentDataset = item.dataset();
         currentVariable = null;
         activeWavePair = waveVariablePairFinder.find(item.dataset()).orElse(null);
+        activeVelocityPair = velocityVariablePairFinder.find(item.dataset()).orElse(null);
         latestRenderQueryContext = null;
+        latestBaseImage = null;
+        latestWaveOverlayFrame = null;
+        latestFlowOverlayFrame = null;
+        flowAnimationPhase = 0.0;
+        stopFlowAnimation();
         viewportState.reset();
         // 更新摘要、属性和警告面板。
         updateDatasetPanels(item.dataset());
@@ -414,6 +458,7 @@ public final class MainController {
         view.getCurrentVariableLabel().setText("Variable: -");
         view.getRangeInfoLabel().setText("Range: -");
         view.getLayerInfoLabel().setText("Layer: -");
+        updateFlowLineControls();
         updateWaveArrowControls();
         // 优先选中第一个可绘制变量，提升切换体验。
         VariableInfo preferredVariable = item.dataset().plottableVariables().stream().findFirst().orElse(null);
@@ -492,7 +537,13 @@ public final class MainController {
         currentDataset = null;
         currentVariable = null;
         activeWavePair = null;
+        activeVelocityPair = null;
         latestRenderQueryContext = null;
+        latestBaseImage = null;
+        latestWaveOverlayFrame = null;
+        latestFlowOverlayFrame = null;
+        flowAnimationPhase = 0.0;
+        stopFlowAnimation();
         view.getVariableList().getItems().clear();
         view.getDatasetLabel().setText("No file loaded");
         view.getCoordinateVariableLabel().setText("Coordinates: -");
@@ -510,6 +561,8 @@ public final class MainController {
         view.getApplyRangeButton().setDisable(true);
         view.getMinField().setDisable(true);
         view.getMaxField().setDisable(true);
+        view.getFlowLineCheck().setSelected(false);
+        view.getFlowLineCheck().setDisable(true);
         view.getWaveArrowCheck().setSelected(false);
         view.getWaveArrowCheck().setDisable(true);
         renderPlaceholder("Open a NetCDF file to begin.");
@@ -624,6 +677,30 @@ public final class MainController {
         view.getWaveArrowCheck().setDisable(!available);
     }
 
+    /*
+     * ========================================================================
+     * 步骤2：刷新流线控件状态
+     * ========================================================================
+     * 目标：
+     *   1) 让界面只在数据集存在兼容 u/v 或 ua/va 时开放流线开关
+     * 操作要点：
+     *   1) 无配对时强制取消勾选并停止动画
+     *   2) 有配对时仅解除禁用，不改用户勾选状态
+     */
+    private void updateFlowLineControls() {
+        // 2.1 根据当前数据集是否识别出速度变量配对决定控件可用性。
+        boolean available = activeVelocityPair != null;
+
+        // 2.2 没有速度变量配对时强制取消勾选并停止动画。
+        if (!available) {
+            view.getFlowLineCheck().setSelected(false);
+            stopFlowAnimation();
+        }
+
+        // 2.3 同步更新勾选框禁用状态。
+        view.getFlowLineCheck().setDisable(!available);
+    }
+
     private void renderCurrentSelection() {
         // 获取主画布对象。
         Canvas canvas = view.getRenderCanvas();
@@ -666,18 +743,23 @@ public final class MainController {
             ColorMap colorMap = colorMaps.getOrDefault(view.getColorMapCombo().getValue(), ColorMaps.viridis());
             // 在当前状态下决定是否启用波场箭头叠加层。
             WaveVariablePair wavePair = view.getWaveArrowCheck().isSelected() ? activeWavePair : null;
+            // 在当前状态下决定是否启用流线叠加层。
+            VelocityVariablePair flowPair = view.getFlowLineCheck().isSelected() ? activeVelocityPair : null;
             // 确保视口已适配当前网格范围。
             viewportState.ensureFitted(currentDataset.mesh(), canvas.getWidth(), canvas.getHeight());
             // 生成新的渲染序号，供后台任务结果校验使用。
             long requestId = ++renderSequence;
             // 新一轮渲染开始时先清空旧的查询上下文，避免点击命中过期结果。
             latestRenderQueryContext = null;
+            latestWaveOverlayFrame = null;
+            latestFlowOverlayFrame = null;
+            stopFlowAnimation();
             // 显示渲染中提示。
             view.getOverlayLabel().setText("Rendering " + currentVariable.name() + " ...");
             view.getOverlayLabel().setVisible(true);
             setStatus("Rendering " + currentVariable.name() + " ...");
             // 在后台线程中执行真正的图像渲染。
-            renderAsync(requestId, layerIndex, values, colorMap, displayRange, wavePair);
+            renderAsync(requestId, layerIndex, values, colorMap, displayRange, wavePair, flowPair);
         } catch (Exception exception) {
             // 渲染准备阶段异常时，直接退回占位提示。
             renderPlaceholder("Could not render the selected variable: " + exception.getMessage());
@@ -690,7 +772,8 @@ public final class MainController {
         double[] values,
         ColorMap colorMap,
         RangeStats displayRange,
-        WaveVariablePair wavePair
+        WaveVariablePair wavePair,
+        VelocityVariablePair flowPair
     ) {
         // 快照当前画布与状态，避免后台线程期间界面对象变化。
         Canvas canvas = view.getRenderCanvas();
@@ -719,7 +802,8 @@ public final class MainController {
 
                 // 再按需准备波场箭头叠加层所需的数据。
                 WaveOverlayFrame waveOverlayFrame = null;
-                String waveOverlayMessage = null;
+                FlowOverlayFrame flowOverlayFrame = null;
+                String overlayMessage = null;
                 if (wavePair != null) {
                     try {
                         int waveLayerIndex = wavePair.resolveLayerIndex(layerIndex);
@@ -735,18 +819,53 @@ public final class MainController {
                                 waveLayerIndex,
                                 directionValues,
                                 wavelengthValues,
-                                wavelengthRange
+                                wavelengthRange,
+                                snapshot
                             );
                         }
                     } catch (Exception waveError) {
-                        waveOverlayMessage = "Wave arrows skipped: " + waveError.getMessage();
+                        overlayMessage = "Wave arrows skipped: " + waveError.getMessage();
+                    }
+                }
+
+                // 再按需准备流线叠加层所需的数据。
+                if (flowPair != null) {
+                    try {
+                        int flowLayerIndex = flowPair.resolveLayerIndex(layerIndex);
+                        double[] uValues = parser.readLayer(dataset, flowPair.eastwardVariable(), flowLayerIndex);
+                        double[] vValues = parser.readLayer(dataset, flowPair.northwardVariable(), flowLayerIndex);
+                        List<FlowLineGenerator.FlowLine> lines = flowLineGenerator.generate(
+                            dataset.mesh(),
+                            uValues,
+                            vValues,
+                            snapshot,
+                            width,
+                            height,
+                            flowPair.elementCentered(),
+                            flowPair.eastwardVariable().fillValue(),
+                            flowPair.northwardVariable().fillValue(),
+                            flowLayerIndex
+                        );
+                        if (!lines.isEmpty()) {
+                            flowOverlayFrame = new FlowOverlayFrame(
+                                flowPair,
+                                flowLayerIndex,
+                                lines,
+                                snapshot
+                            );
+                        }
+                    } catch (Exception flowError) {
+                        overlayMessage = overlayMessage == null
+                            ? "Flow lines skipped: " + flowError.getMessage()
+                            : overlayMessage + "; Flow lines skipped: " + flowError.getMessage();
                     }
                 }
 
                 return new RenderFrame(
                     SwingFXUtils.toFXImage(bufferedImage, null),
                     waveOverlayFrame,
-                    waveOverlayMessage
+                    flowOverlayFrame,
+                    overlayMessage
                 );
             }
         };
@@ -758,29 +877,9 @@ public final class MainController {
                 return;
             }
             RenderFrame frame = renderTask.getValue();
-            // 清空旧画布内容。
-            canvas.getGraphicsContext2D().clearRect(0, 0, canvas.getWidth(), canvas.getHeight());
-            // 绘制新的离屏结果。
-            canvas.getGraphicsContext2D().drawImage(frame.image(), 0, 0, canvas.getWidth(), canvas.getHeight());
-            // 在海岸线之前绘制波场箭头叠加层。
-            if (frame.waveOverlayFrame() != null) {
-                waveArrowOverlayRenderer.render(
-                    canvas.getGraphicsContext2D(),
-                    dataset.mesh(),
-                    frame.waveOverlayFrame().directionValues(),
-                    frame.waveOverlayFrame().wavelengthValues(),
-                    snapshot,
-                    width,
-                    height,
-                    frame.waveOverlayFrame().pair().elementCentered(),
-                    frame.waveOverlayFrame().pair().directionVariable().fillValue(),
-                    frame.waveOverlayFrame().pair().wavelengthVariable().fillValue(),
-                    frame.waveOverlayFrame().layerIndex(),
-                    frame.waveOverlayFrame().wavelengthRange()
-                );
-            }
-            // 在主图之上绘制海岸线叠加层。
-            coastlineOverlayRenderer.render(canvas.getGraphicsContext2D(), currentOverlay, snapshot);
+            latestBaseImage = frame.image();
+            latestWaveOverlayFrame = frame.waveOverlayFrame();
+            latestFlowOverlayFrame = frame.flowOverlayFrame();
             // 刷新右侧色条。
             view.getColorBarCanvas().render(colorMap, displayRange);
             // 缓存当前成功渲染的查询上下文，供点击单点查询复用。
@@ -793,6 +892,8 @@ public final class MainController {
                 variable.fillValue(),
                 snapshot
             );
+            // 用缓存底图和叠加层刷新主画布。
+            drawLatestFrame();
             // 更新当前变量标签。
             view.getCurrentVariableLabel().setText("Variable: " + variable.name() + " " + variable.dimensionSummary());
             // 更新范围标签。
@@ -807,7 +908,7 @@ public final class MainController {
             view.getExportButton().setDisable(false);
             view.getExportPngMenuItem().setDisable(false);
             // 更新状态栏。
-            setStatus(frame.waveOverlayMessage() == null ? "Rendered " + variable.name() : frame.waveOverlayMessage());
+            setStatus(frame.overlayMessage() == null ? "Rendered " + variable.name() : frame.overlayMessage());
         });
 
         // 渲染失败时退回错误占位信息。
@@ -815,6 +916,7 @@ public final class MainController {
             if (requestId != renderSequence) {
                 return;
             }
+            stopFlowAnimation();
             Throwable error = renderTask.getException();
             renderPlaceholder("Could not render the selected variable: " + (error == null ? "unknown error" : error.getMessage()));
         });
@@ -823,6 +925,111 @@ public final class MainController {
         Thread worker = new Thread(renderTask, "render-" + requestId);
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /*
+     * ========================================================================
+     * 步骤3：使用缓存底图重绘当前视图
+     * ========================================================================
+     * 目标：
+     *   1) 用最近一次成功渲染的底图和叠加层快速重绘
+     *   2) 让流线动画只重绘亮带，不重复读 nc 和离屏渲染
+     * 操作要点：
+     *   1) 先画底图
+     *   2) 再按当前勾选状态补流线、波场箭头和海岸线
+     */
+    private void drawLatestFrame() {
+        // 3.1 没有缓存底图或查询上下文时直接返回。
+        if (latestBaseImage == null || latestRenderQueryContext == null) {
+            return;
+        }
+
+        // 3.2 先清空画布并绘制底图。
+        Canvas canvas = view.getRenderCanvas();
+        canvas.getGraphicsContext2D().clearRect(0, 0, canvas.getWidth(), canvas.getHeight());
+        canvas.getGraphicsContext2D().drawImage(latestBaseImage, 0, 0, canvas.getWidth(), canvas.getHeight());
+
+        // 3.3 再按当前勾选状态绘制流线亮带、本体、波场箭头和海岸线。
+        if (view.getFlowLineCheck().isSelected() && latestFlowOverlayFrame != null) {
+            flowLineOverlayRenderer.render(
+                canvas.getGraphicsContext2D(),
+                latestFlowOverlayFrame.lines(),
+                flowAnimationPhase
+            );
+            startFlowAnimation();
+        } else {
+            stopFlowAnimation();
+        }
+
+        if (view.getWaveArrowCheck().isSelected() && latestWaveOverlayFrame != null) {
+            waveArrowOverlayRenderer.render(
+                canvas.getGraphicsContext2D(),
+                latestRenderQueryContext.dataset().mesh(),
+                latestWaveOverlayFrame.directionValues(),
+                latestWaveOverlayFrame.wavelengthValues(),
+                latestWaveOverlayFrame.snapshot(),
+                Math.max(1, (int) Math.round(canvas.getWidth())),
+                Math.max(1, (int) Math.round(canvas.getHeight())),
+                latestWaveOverlayFrame.pair().elementCentered(),
+                latestWaveOverlayFrame.pair().directionVariable().fillValue(),
+                latestWaveOverlayFrame.pair().wavelengthVariable().fillValue(),
+                latestWaveOverlayFrame.layerIndex(),
+                latestWaveOverlayFrame.wavelengthRange()
+            );
+        }
+
+        coastlineOverlayRenderer.render(
+            canvas.getGraphicsContext2D(),
+            currentOverlay,
+            latestRenderQueryContext.snapshot()
+        );
+    }
+
+    /*
+     * ========================================================================
+     * 步骤4：启动流线亮带动画
+     * ========================================================================
+     * 目标：
+     *   1) 让流线亮带沿线循环移动
+     * 操作要点：
+     *   1) 时间线只更新时间相位
+     *   2) 每一帧复用缓存底图和流线
+     */
+    private void startFlowAnimation() {
+        // 4.1 只有流线叠加开启且当前有流线缓存时才启动动画。
+        if (!view.getFlowLineCheck().isSelected() || latestFlowOverlayFrame == null) {
+            return;
+        }
+
+        // 4.2 首次启动时构造时间线，后续复用同一对象。
+        if (flowAnimationTimeline == null) {
+            flowAnimationTimeline = new Timeline(new KeyFrame(Duration.millis(80), event -> {
+                flowAnimationPhase += 0.06;
+                drawLatestFrame();
+            }));
+            flowAnimationTimeline.setCycleCount(Animation.INDEFINITE);
+        }
+
+        // 4.3 若当前尚未运行则启动动画。
+        if (flowAnimationTimeline.getStatus() != Animation.Status.RUNNING) {
+            flowAnimationTimeline.play();
+        }
+    }
+
+    /*
+     * ========================================================================
+     * 步骤5：停止流线亮带动画
+     * ========================================================================
+     * 目标：
+     *   1) 在关闭流线叠加、切数据集或渲染失败时及时停表
+     * 操作要点：
+     *   1) 仅停止时间线，不清空底图缓存
+     */
+    private void stopFlowAnimation() {
+        // 5.1 已创建时间线时停止播放。
+        if (flowAnimationTimeline != null) {
+            flowAnimationTimeline.stop();
+        }
     }
 
     private RangeStats resolveRange(RangeStats computedRange) {
@@ -876,6 +1083,10 @@ public final class MainController {
         view.getOverlayLabel().setVisible(true);
         // 占位状态下清空最近一次可查询渲染上下文。
         latestRenderQueryContext = null;
+        latestBaseImage = null;
+        latestWaveOverlayFrame = null;
+        latestFlowOverlayFrame = null;
+        stopFlowAnimation();
         // 占位状态下不允许导出。
         view.getExportButton().setDisable(true);
         view.getExportPngMenuItem().setDisable(true);
@@ -957,16 +1168,12 @@ public final class MainController {
     }
 
     private void redrawCurrentView() {
-        if (currentDataset != null && currentVariable != null && currentVariable.plottable()) {
-            renderCurrentSelection();
+        if (latestBaseImage != null && latestRenderQueryContext != null) {
+            drawLatestFrame();
             return;
         }
-        if (latestRenderQueryContext != null && currentOverlay != null) {
-            coastlineOverlayRenderer.render(
-                view.getRenderCanvas().getGraphicsContext2D(),
-                currentOverlay,
-                latestRenderQueryContext.snapshot()
-            );
+        if (currentDataset != null && currentVariable != null && currentVariable.plottable()) {
+            renderCurrentSelection();
         }
     }
 
@@ -1053,7 +1260,8 @@ public final class MainController {
     private record RenderFrame(
         WritableImage image,
         WaveOverlayFrame waveOverlayFrame,
-        String waveOverlayMessage
+        FlowOverlayFrame flowOverlayFrame,
+        String overlayMessage
     ) {
     }
 
@@ -1062,7 +1270,16 @@ public final class MainController {
         int layerIndex,
         double[] directionValues,
         double[] wavelengthValues,
-        RangeStats wavelengthRange
+        RangeStats wavelengthRange,
+        ViewportState.Snapshot snapshot
+    ) {
+    }
+
+    private record FlowOverlayFrame(
+        VelocityVariablePair pair,
+        int layerIndex,
+        List<FlowLineGenerator.FlowLine> lines,
+        ViewportState.Snapshot snapshot
     ) {
     }
 
