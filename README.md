@@ -146,21 +146,36 @@ powershell -ExecutionPolicy Bypass -File .\scripts\package-exe.ps1
 ## 工程结构
 
 ```text
+docs/
+├── images/              # README 截图等文档图片
+└── superpowers/         # 设计稿与实现计划
+
+samples/
+└── coastline/           # 海岸线样例数据
+
+scripts/
+├── package-exe.ps1      # Windows 安装包打包脚本
+└── package-linux-x86.ps1
+
 src/
 ├── main/
 │   ├── java/com/example/netcdfviewer/
-│   │   ├── io/          # NetCDF 解析
-│   │   ├── model/       # 网格与变量模型
-│   │   ├── render/      # 渲染与颜色映射
+│   │   ├── io/          # NetCDF 解析与变量识别
+│   │   ├── model/       # 网格与变量配对模型
+│   │   ├── overlay/     # 海岸线叠加加载与绘制
+│   │   ├── render/      # 平面渲染、波向箭头与流线绘制
 │   │   └── ui/          # JavaFX 界面与控制器
 │   └── resources/
+│       ├── coastline/   # 内置海岸线资源
 │       └── icons/       # 应用与安装包图标
 └── test/
     └── java/com/example/netcdfviewer/
         ├── io/
+        ├── overlay/
         ├── render/
         ├── runtime/
         ├── smoke/
+        ├── testsupport/
         └── ui/
 ```
 
