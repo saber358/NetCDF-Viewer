@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 class LocalSampleDatasetTest {
@@ -75,5 +76,23 @@ class LocalSampleDatasetTest {
         }
 
         System.out.println("No local layered scalar sample found. Diagnostics:\n" + String.join("\n", diagnostics));
+    }
+
+    @Test
+    void localStructuredSamplesExposeStructuredDomainWhenPresent() throws Exception {
+        NetcdfDatasetParser parser = new NetcdfDatasetParser();
+        List<String> candidates = List.of("XTPY-wrf.nc", "XTPY-roms.nc", "ydy-wrf.nc", "ydy-roms.nc");
+
+        for (String fileName : candidates) {
+            try {
+                Path path = SampleDatasetPaths.resolve(fileName);
+                ParsedDataset dataset = parser.open(path);
+                assertTrue(dataset.hasSpatialDomain(), fileName);
+                assertEquals(com.example.netcdfviewer.model.SpatialDomain.Kind.STRUCTURED_GRID, dataset.spatialDomain().kind(), fileName);
+                assertTrue(dataset.selectedCoordinateBinding().isPresent(), fileName);
+            } catch (IllegalArgumentException ignored) {
+                // 本地缺少该样例时跳过。
+            }
+        }
     }
 }

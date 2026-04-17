@@ -1,6 +1,9 @@
 package com.example.netcdfviewer.io;
 
+import com.example.netcdfviewer.model.CoordinateBinding;
 import com.example.netcdfviewer.model.MeshData;
+import com.example.netcdfviewer.model.SpatialDomain;
+import com.example.netcdfviewer.model.TriangleDomain;
 import com.example.netcdfviewer.model.VariableInfo;
 
 import java.nio.file.Path;
@@ -20,6 +23,12 @@ public record ParsedDataset(
     Path sourcePath,
     // 解析得到的网格对象；如果无法构建网格则可能为 null。
     MeshData mesh,
+    // 统一空间域对象。
+    SpatialDomain spatialDomain,
+    // 可用坐标候选。
+    List<CoordinateBinding> coordinateBindings,
+    // 当前选中的坐标候选。
+    CoordinateBinding selectedCoordinateBindingValue,
     // 文件内所有变量的描述信息。
     List<VariableInfo> variables,
     // 所有维度名称及长度。
@@ -48,6 +57,39 @@ public record ParsedDataset(
         axisCoordinates = Collections.unmodifiableMap(new LinkedHashMap<>(axisCoordinates));
         // 复制警告列表，避免外部修改。
         warnings = List.copyOf(warnings);
+        coordinateBindings = List.copyOf(coordinateBindings);
+        if (spatialDomain == null && mesh != null) {
+            spatialDomain = new TriangleDomain(mesh);
+        }
+    }
+
+    public ParsedDataset(
+        Path sourcePath,
+        MeshData mesh,
+        List<VariableInfo> variables,
+        Map<String, Integer> dimensions,
+        Map<String, String> globalAttributes,
+        Map<String, double[]> axisCoordinates,
+        List<String> warnings,
+        String xVariableName,
+        String yVariableName,
+        String connectivityVariableName
+    ) {
+        this(
+            sourcePath,
+            mesh,
+            mesh == null ? null : new TriangleDomain(mesh),
+            List.of(),
+            null,
+            variables,
+            dimensions,
+            globalAttributes,
+            axisCoordinates,
+            warnings,
+            xVariableName,
+            yVariableName,
+            connectivityVariableName
+        );
     }
 
     public boolean hasMesh() {
@@ -62,8 +104,16 @@ public record ParsedDataset(
             .collect(Collectors.toList());
     }
 
+    public boolean hasSpatialDomain() {
+        return spatialDomain != null;
+    }
+
     public Optional<double[]> axisValues(String name) {
         // 通过可选值返回轴数组，避免调用方处理空指针。
         return Optional.ofNullable(axisCoordinates.get(name));
+    }
+
+    public Optional<CoordinateBinding> selectedCoordinateBinding() {
+        return Optional.ofNullable(selectedCoordinateBindingValue);
     }
 }

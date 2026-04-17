@@ -26,13 +26,46 @@ public record VariableInfo(
     // 层轴所在位置；如果不存在则为 -1。
     int layerAxis,
     // 缺测值或填充值。
-    Double fillValue
+    Double fillValue,
+    // 水平基准标识。
+    String basisId,
+    // 几何类型。
+    SpatialDomain.Kind geometryKind,
+    // 是否为网格单元中心变量。
+    boolean cellCentered
 ) {
     public VariableInfo {
         // 复制维度名称列表，避免外部修改。
         dimensionNames = List.copyOf(dimensionNames);
         // 复制维度长度列表，避免外部修改。
         dimensionSizes = List.copyOf(dimensionSizes);
+    }
+
+    public VariableInfo(
+        String name,
+        String dataType,
+        List<String> dimensionNames,
+        List<Integer> dimensionSizes,
+        boolean plottable,
+        int nodeAxis,
+        boolean elementCentered,
+        int layerAxis,
+        Double fillValue
+    ) {
+        this(
+            name,
+            dataType,
+            dimensionNames,
+            dimensionSizes,
+            plottable,
+            nodeAxis,
+            elementCentered,
+            layerAxis,
+            fillValue,
+            nodeAxis >= 0 ? (elementCentered ? "triangle:cell:" + nodeAxis : "triangle:node:" + nodeAxis) : null,
+            nodeAxis >= 0 ? SpatialDomain.Kind.TRIANGLE_MESH : null,
+            elementCentered
+        );
     }
 
     public boolean layered() {

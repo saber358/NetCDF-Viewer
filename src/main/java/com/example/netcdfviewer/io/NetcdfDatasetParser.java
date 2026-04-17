@@ -1,6 +1,12 @@
 package com.example.netcdfviewer.io;
 
+import com.example.netcdfviewer.model.CoordinateBinding;
+import com.example.netcdfviewer.model.HorizontalBasis;
 import com.example.netcdfviewer.model.MeshData;
+import com.example.netcdfviewer.model.SpatialDomain;
+import com.example.netcdfviewer.model.StructuredGridData;
+import com.example.netcdfviewer.model.StructuredGridDomain;
+import com.example.netcdfviewer.model.TriangleDomain;
 import com.example.netcdfviewer.model.VariableInfo;
 import ucar.ma2.Array;
 import ucar.ma2.DataType;
@@ -70,35 +76,19 @@ public final class NetcdfDatasetParser {
             String connectivityVariableName = null;
             int nodeCount = -1;
             int elementCount = -1;
+            SpatialDomain spatialDomain = null;
+            List<CoordinateBinding> coordinateBindings = List.of();
+            CoordinateBinding selectedCoordinateBinding = null;
 
             // 找出所有可能的坐标变量组合。
             List<CoordinatePair> coordinatePairs = findCoordinatePairs(variables);
             if (!coordinatePairs.isEmpty()) {
-                double[] selectedX = null;
-                double[] selectedY = null;
-                CoordinatePair selectedPair = null;
-
-                // 逐个尝试候选坐标对，直到找到跨度合理的一组。
-                for (CoordinatePair pair : coordinatePairs) {
-                    double[] candidateX = readDoubleArray(pair.xVariable());
-                    double[] candidateY = readDoubleArray(pair.yVariable());
-                    // 若坐标退化为常数数组，则跳过该坐标对。
-                    if (!hasMeaningfulSpan(candidateX) || !hasMeaningfulSpan(candidateY)) {
-                        warnings.add("Skipping degenerate coordinate pair "
-                            + pair.xVariable().getShortName()
-                            + " / "
-                            + pair.yVariable().getShortName()
-                            + ".");
-                        continue;
-                    }
-                    selectedPair = pair;
-                    selectedX = candidateX;
-                    selectedY = candidateY;
-                    break;
-                }
+                CoordinatePair selectedPair = pickTriangleCoordinatePair(coordinatePairs, warnings);
 
                 // 坐标对选择成功后，再继续寻找三角形连接变量。
                 if (selectedPair != null) {
+                    double[] selectedX = readDoubleArray(selectedPair.xVariable());
+                    double[] selectedY = readDoubleArray(selectedPair.yVariable());
                     nodeCount = selectedX.length;
                     xVariableName = selectedPair.xVariable().getShortName();
                     yVariableName = selectedPair.yVariable().getShortName();
@@ -110,20 +100,34 @@ public final class NetcdfDatasetParser {
                         mesh = new MeshData(selectedX, selectedY, normalizeConnectivity(readTriangleConnectivity(variable), nodeCount));
                         connectivityVariableName = variable.getShortName();
                         elementCount = mesh.triangleCount();
+                        spatialDomain = new TriangleDomain(mesh);
                     } else {
                         warnings.add("No valid triangle connectivity variable was found.");
                     }
                 } else {
                     warnings.add("No compatible coordinate pair was found.");
                 }
-            } else {
-                warnings.add("No compatible coordinate pair was found.");
+            }
+
+            // 三角网未命中时，继续尝试标准格网坐标绑定。
+            if (spatialDomain == null) {
+                coordinateBindings = findStructuredCoordinateBindings(variables);
+                if (!coordinateBindings.isEmpty()) {
+                    selectedCoordinateBinding = coordinateBindings.get(0);
+                    spatialDomain = buildStructuredDomain(variables, selectedCoordinateBinding);
+                    xVariableName = selectedCoordinateBinding.xName();
+                    yVariableName = selectedCoordinateBinding.yName();
+                } else {
+                    warnings.add("No compatible horizontal coordinate binding was found.");
+                }
             }
 
             // 根据维度名称和轴名称识别潜在层轴。
             Set<String> layerDimensionNames = detectLayerDimensionNames(dimensions, axisCoordinates);
             final int resolvedNodeCount = nodeCount;
             final int resolvedElementCount = elementCount;
+            final SpatialDomain resolvedSpatialDomain = spatialDomain;
+            final List<CoordinateBinding> resolvedCoordinateBindings = coordinateBindings;
             // 为每个变量构建元信息描述对象。
             List<VariableInfo> variableInfos = variables.stream()
                 .map(variable -> describeVariable(
@@ -134,7 +138,9 @@ public final class NetcdfDatasetParser {
                     resolvedNodeCount,
                     resolvedElementCount,
                     layerDimensionNames,
-                    readFillValue(variable)
+                    readFillValue(variable),
+                    resolvedSpatialDomain,
+                    resolvedCoordinateBindings
                 ))
                 .collect(Collectors.toList());
 
@@ -142,6 +148,9 @@ public final class NetcdfDatasetParser {
             return new ParsedDataset(
                 path,
                 mesh,
+                spatialDomain,
+                coordinateBindings,
+                selectedCoordinateBinding,
                 variableInfos,
                 dimensions,
                 globalAttributes,
@@ -239,6 +248,21 @@ public final class NetcdfDatasetParser {
         Set<String> layerDimensionNames,
         Double fillValue
     ) {
+        return describeVariable(name, dataType, dimensionNames, dimensionSizes, nodeCount, elementCount, layerDimensionNames, fillValue, null, List.of());
+    }
+
+    static VariableInfo describeVariable(
+        String name,
+        DataType dataType,
+        List<String> dimensionNames,
+        List<Integer> dimensionSizes,
+        int nodeCount,
+        int elementCount,
+        Set<String> layerDimensionNames,
+        Double fillValue,
+        SpatialDomain spatialDomain,
+        List<CoordinateBinding> coordinateBindings
+    ) {
         // 先尝试识别变量对应的空间轴位置。
         SpatialMatch spatialMatch = findSpatialMatch(dimensionSizes, nodeCount, elementCount, dimensionNames);
         int nodeAxis = spatialMatch == null ? -1 : spatialMatch.axis();
@@ -246,9 +270,14 @@ public final class NetcdfDatasetParser {
         // 只有数值型变量才有资格参与渲染。
         boolean numeric = dataType != null && dataType.isNumeric();
         // 坐标轴变量本身不应作为属性变量参与平面绘图。
-        boolean coordinateAxis = looksLikeAxisVariable(name, dimensionNames);
+        boolean coordinateAxis = looksLikeAxisVariable(name, dimensionNames)
+            || coordinateBindings.stream().anyMatch(binding ->
+            binding.xName().equalsIgnoreCase(name) || binding.yName().equalsIgnoreCase(name));
         boolean plottable = false;
         int layerAxis = -1;
+        String basisId = null;
+        SpatialDomain.Kind geometryKind = null;
+        boolean cellCentered = elementCentered;
 
         // 满足条件后再继续判断它是单层变量还是分层变量。
         if (numeric && nodeAxis >= 0 && !coordinateAxis) {
@@ -276,6 +305,40 @@ public final class NetcdfDatasetParser {
             }
         }
 
+        // 标准格网按坐标绑定识别变量水平基准。
+        if (spatialDomain != null
+            && spatialDomain.kind() == SpatialDomain.Kind.STRUCTURED_GRID
+            && numeric
+            && !coordinateAxis) {
+            HorizontalBasis basis = findStructuredBasis(dimensionNames, coordinateBindings);
+            if (basis != null) {
+                List<Integer> remainingAxes = new ArrayList<>();
+                for (int axis = 0; axis < dimensionSizes.size(); axis++) {
+                    if (basis.horizontalDimensions().contains(dimensionNames.get(axis))) {
+                        continue;
+                    }
+                    if (dimensionSizes.get(axis) > 1) {
+                        remainingAxes.add(axis);
+                    }
+                }
+                if (remainingAxes.isEmpty()) {
+                    plottable = true;
+                } else if (remainingAxes.size() == 1) {
+                    int candidateLayerAxis = remainingAxes.get(0);
+                    String dimensionName = dimensionNames.get(candidateLayerAxis).toLowerCase(Locale.ROOT);
+                    if (layerDimensionNames.contains(dimensionName)) {
+                        layerAxis = candidateLayerAxis;
+                        plottable = true;
+                    }
+                }
+                basisId = basis.id();
+                geometryKind = SpatialDomain.Kind.STRUCTURED_GRID;
+                cellCentered = basis.cellCentered();
+                nodeAxis = dimensionNames.indexOf(basis.horizontalDimensions().get(Math.min(1, basis.horizontalDimensions().size() - 1)));
+                elementCentered = basis.cellCentered();
+            }
+        }
+
         return new VariableInfo(
             name,
             dataType == null ? "UNKNOWN" : dataType.name(),
@@ -285,7 +348,10 @@ public final class NetcdfDatasetParser {
             nodeAxis,
             elementCentered,
             layerAxis,
-            fillValue
+            fillValue,
+            basisId,
+            geometryKind,
+            cellCentered
         );
     }
 
@@ -372,6 +438,23 @@ public final class NetcdfDatasetParser {
         return pairs;
     }
 
+    private static CoordinatePair pickTriangleCoordinatePair(List<CoordinatePair> coordinatePairs, List<String> warnings) throws IOException {
+        for (CoordinatePair pair : coordinatePairs) {
+            double[] candidateX = readDoubleArray(pair.xVariable());
+            double[] candidateY = readDoubleArray(pair.yVariable());
+            if (!hasMeaningfulSpan(candidateX) || !hasMeaningfulSpan(candidateY)) {
+                warnings.add("Skipping degenerate coordinate pair "
+                    + pair.xVariable().getShortName()
+                    + " / "
+                    + pair.yVariable().getShortName()
+                    + ".");
+                continue;
+            }
+            return pair;
+        }
+        return null;
+    }
+
     private static void addCoordinatePair(List<CoordinatePair> pairs, Variable xVariable, Variable yVariable) {
         // 避免同一变量对被重复加入候选列表。
         boolean exists = pairs.stream()
@@ -393,6 +476,42 @@ public final class NetcdfDatasetParser {
             max = Math.max(max, value);
         }
         return Double.isFinite(min) && Double.isFinite(max) && (max - min) > 1e-9;
+    }
+
+    private static List<CoordinateBinding> findStructuredCoordinateBindings(List<Variable> variables) {
+        List<Variable> numeric1d = variables.stream()
+            .filter(variable -> variable.getRank() == 1 && variable.getDataType().isNumeric())
+            .collect(Collectors.toList());
+
+        return numeric1d.stream()
+            .flatMap(xVariable -> numeric1d.stream()
+                .filter(yVariable -> yVariable != xVariable)
+                .filter(yVariable -> {
+                    try {
+                        return hasMeaningfulSpan(readDoubleArray(xVariable)) && hasMeaningfulSpan(readDoubleArray(yVariable));
+                    } catch (IOException exception) {
+                        return false;
+                    }
+                })
+                .filter(yVariable -> coordinateKindsDiffer(xVariable, yVariable))
+                .map(yVariable -> {
+                    Variable actualX = looksLikeX(xVariable) ? xVariable : yVariable;
+                    Variable actualY = looksLikeX(xVariable) ? yVariable : xVariable;
+                    return new CoordinateBinding(
+                        "binding:" + actualX.getShortName() + ":" + actualY.getShortName(),
+                        actualX.getShortName(),
+                        actualY.getShortName(),
+                        List.of(
+                            actualX.getDimensions().get(0).getShortName(),
+                            actualY.getDimensions().get(0).getShortName()
+                        ),
+                        false
+                    );
+                }))
+            .filter(binding -> !binding.horizontalDimensions().get(0).equals(binding.horizontalDimensions().get(1)))
+            .sorted(Comparator.comparingInt(NetcdfDatasetParser::bindingScore).reversed())
+            .distinct()
+            .collect(Collectors.toList());
     }
 
     private static Optional<Variable> findConnectivityVariable(List<Variable> variables, int nodeCount) {
@@ -434,6 +553,21 @@ public final class NetcdfDatasetParser {
         return names;
     }
 
+    private static StructuredGridDomain buildStructuredDomain(List<Variable> variables, CoordinateBinding binding) throws IOException {
+        Variable xVariable = variables.stream()
+            .filter(variable -> variable.getShortName().equals(binding.xName()))
+            .findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("Coordinate variable not found: " + binding.xName()));
+        Variable yVariable = variables.stream()
+            .filter(variable -> variable.getShortName().equals(binding.yName()))
+            .findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("Coordinate variable not found: " + binding.yName()));
+        double[] xAxis = readDoubleArray(xVariable);
+        double[] yAxis = readDoubleArray(yVariable);
+        StructuredGridData grid = new StructuredGridData(binding, xAxis, yAxis, null, null, xAxis.length, yAxis.length);
+        return new StructuredGridDomain(grid, binding);
+    }
+
     private static Map<String, double[]> readAxisCoordinates(List<Variable> variables) throws IOException {
         // 读取全部一维数值轴，为层值显示和坐标识别做准备。
         Map<String, double[]> axisCoordinates = new LinkedHashMap<>();
@@ -451,6 +585,15 @@ public final class NetcdfDatasetParser {
             axisCoordinates.putIfAbsent(dimensions.get(0).getShortName(), values);
         }
         return axisCoordinates;
+    }
+
+    private static HorizontalBasis findStructuredBasis(List<String> dimensionNames, List<CoordinateBinding> coordinateBindings) {
+        for (CoordinateBinding binding : coordinateBindings) {
+            if (dimensionNames.containsAll(binding.horizontalDimensions())) {
+                return new HorizontalBasis(binding.id(), binding.id(), binding.horizontalDimensions(), false, false);
+            }
+        }
+        return null;
     }
 
     private static SpatialMatch findSpatialMatch(List<Integer> dimensionSizes, int nodeCount, int elementCount, List<String> dimensionNames) {
@@ -558,7 +701,7 @@ public final class NetcdfDatasetParser {
         if (name.equals("x") || name.equals("y") || name.equals("lon") || name.equals("lat")) {
             score += 100;
         }
-        if (name.contains("lon") || name.contains("lat") || name.contains("coord") || name.equals("x") || name.equals("y")) {
+        if (name.contains("lon") || name.contains("lat") || name.contains("long") || name.contains("coord") || name.equals("x") || name.equals("y")) {
             score += 25;
         }
         Attribute units = variable.findAttributeIgnoreCase("units");
@@ -573,13 +716,52 @@ public final class NetcdfDatasetParser {
 
     private static boolean coordinateKindsDiffer(Variable first, Variable second) {
         // 只有一个像 X 轴、一个像 Y 轴时，才认为它们适合配对。
-        return looksLikeX(first) != looksLikeX(second);
+        return (looksLikeX(first) && looksLikeY(second)) || (looksLikeY(first) && looksLikeX(second));
     }
 
     private static boolean looksLikeX(Variable variable) {
         // 根据名称判断该变量是否更像东西向坐标。
         String name = variable.getShortName().toLowerCase(Locale.ROOT);
-        return name.equals("x") || name.contains("lon") || name.contains("east");
+        if (name.contains("lat") || name.contains("north")) {
+            return false;
+        }
+        return name.equals("x")
+            || name.startsWith("x")
+            || name.contains("lon")
+            || name.contains("long")
+            || name.contains("east");
+    }
+
+    private static boolean looksLikeY(Variable variable) {
+        String name = variable.getShortName().toLowerCase(Locale.ROOT);
+        if (name.contains("lon") || name.contains("long") || name.contains("east")) {
+            return false;
+        }
+        return name.equals("y")
+            || name.startsWith("y")
+            || name.contains("lat")
+            || name.contains("north");
+    }
+
+    private static int bindingScore(CoordinateBinding binding) {
+        int score = 0;
+        String xName = binding.xName().toLowerCase(Locale.ROOT);
+        String yName = binding.yName().toLowerCase(Locale.ROOT);
+        String xDim = binding.horizontalDimensions().get(0).toLowerCase(Locale.ROOT);
+        String yDim = binding.horizontalDimensions().get(1).toLowerCase(Locale.ROOT);
+        if (xName.contains("rho") || yName.contains("rho")) {
+            score += 50;
+        }
+        if (xDim.contains("rho") || yDim.contains("rho")) {
+            score += 50;
+        }
+        if (xName.startsWith("x") || yName.startsWith("y")) {
+            score += 10;
+        }
+        if (xDim.startsWith("x") || yDim.startsWith("y")) {
+            score += 10;
+        }
+        return score;
     }
 
     private static boolean looksLikeAxisVariable(String variableName, List<String> dimensionNames) {
