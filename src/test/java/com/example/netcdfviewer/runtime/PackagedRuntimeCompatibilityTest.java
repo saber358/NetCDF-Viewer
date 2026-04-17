@@ -50,6 +50,7 @@ class PackagedRuntimeCompatibilityTest {
 
         assertTrue(script.contains("function Get-ProjectVersion"));
         assertTrue(script.contains("function Get-ProjectArtifactId"));
+        assertTrue(script.contains("function Find-WixDirectory"));
         assertTrue(script.contains("--app-version $appVersion"));
         assertTrue(script.contains("--vendor lwj"));
         assertTrue(script.contains("--icon"));

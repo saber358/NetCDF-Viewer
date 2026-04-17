@@ -484,6 +484,124 @@ class MainControllerLoadFileTest {
         assertFalse(statusRef.get().contains("Query"), "Drag should not trigger point query: " + statusRef.get());
     }
 
+    @Test
+    void loadingWaveDatasetEnablesWaveArrowToggle() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("HBHQY.nc"));
+
+                assertFalse(view.getWaveArrowCheck().isDisable());
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void loadingDatasetWithoutWavePairDisablesWaveArrowToggle() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("HBHQY.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("ydw.nc"));
+
+                assertTrue(view.getWaveArrowCheck().isDisable());
+                assertFalse(view.getWaveArrowCheck().isSelected());
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void enablingWaveArrowOverlayKeepsRenderPipelineAlive() throws Exception {
+        CountDownLatch initLatch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+        AtomicReference<MainView> viewRef = new AtomicReference<>();
+        AtomicReference<Stage> stageRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                Stage stage = new Stage();
+                MainView view = new MainView();
+                MainController controller = new MainController(stage, view);
+                controller.initialize();
+                stage.setScene(new Scene(view, 1440, 900));
+                stage.show();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("HBHQY.nc"));
+
+                viewRef.set(view);
+                stageRef.set(stage);
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                initLatch.countDown();
+            }
+        });
+
+        assertTrue(initLatch.await(10, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+
+        waitForRender(viewRef.get());
+
+        CountDownLatch toggleLatch = new CountDownLatch(1);
+        Platform.runLater(() -> {
+            try {
+                viewRef.get().getWaveArrowCheck().setSelected(true);
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                toggleLatch.countDown();
+            }
+        });
+        assertTrue(toggleLatch.await(5, TimeUnit.SECONDS));
+
+        waitForRender(viewRef.get());
+        closeStage(stageRef.get());
+
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+        assertTrue(viewRef.get().getWaveArrowCheck().isSelected());
+        assertFalse(viewRef.get().getOverlayLabel().isVisible());
+    }
+
     private static void waitForRender(MainView view) throws Exception {
         AtomicBoolean ready = new AtomicBoolean(false);
         long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);

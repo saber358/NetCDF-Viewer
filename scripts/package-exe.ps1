@@ -28,6 +28,26 @@ function Get-ProjectArtifactId([string]$rootPath) {
     return $artifactId.Trim()
 }
 
+function Find-WixDirectory([string]$startPath) {
+    $current = (Resolve-Path -LiteralPath $startPath).Path
+    while (-not [string]::IsNullOrWhiteSpace($current)) {
+        $candidate = Join-Path $current "tools\wix314"
+        $light = Join-Path $candidate "light.exe"
+        $candle = Join-Path $candidate "candle.exe"
+        if ((Test-Path $light) -and (Test-Path $candle)) {
+            return $candidate
+        }
+
+        $parent = Split-Path -Parent $current
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current) {
+            break
+        }
+        $current = $parent
+    }
+
+    return $null
+}
+
 $appVersion = Get-ProjectVersion $projectRoot
 $artifactId = Get-ProjectArtifactId $projectRoot
 $jarName = "$artifactId-$appVersion.jar"
@@ -35,7 +55,7 @@ $packageInput = Join-Path $projectRoot "target\package-input"
 $installerDir = Join-Path $projectRoot "target\installer"
 $runtimeLibDir = Join-Path $projectRoot "target\app\lib"
 $jarPath = Join-Path $projectRoot ("target\" + $jarName)
-$wixPath = Join-Path $projectRoot "tools\wix314"
+$wixPath = Find-WixDirectory $projectRoot
 $javafxModuleDir = Join-Path $projectRoot "target\javafx-modules"
 $iconPath = Join-Path $projectRoot "src\main\resources\icons\app-icon.ico"
 

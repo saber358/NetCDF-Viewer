@@ -3,7 +3,9 @@ package com.example.netcdfviewer.ui;
 import com.example.netcdfviewer.AppMetadata;
 import com.example.netcdfviewer.io.NetcdfDatasetParser;
 import com.example.netcdfviewer.io.ParsedDataset;
+import com.example.netcdfviewer.io.WaveVariablePairFinder;
 import com.example.netcdfviewer.model.VariableInfo;
+import com.example.netcdfviewer.model.WaveVariablePair;
 import com.example.netcdfviewer.overlay.BuiltInCoastline;
 import com.example.netcdfviewer.overlay.CoastlineOverlay;
 import com.example.netcdfviewer.overlay.CoastlineOverlayLoader;
@@ -14,6 +16,7 @@ import com.example.netcdfviewer.render.MeshPointQuery;
 import com.example.netcdfviewer.render.RangeStats;
 import com.example.netcdfviewer.render.RenderMath;
 import com.example.netcdfviewer.render.TriangleImageRenderer;
+import com.example.netcdfviewer.render.WaveArrowOverlayRenderer;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.concurrent.Task;
@@ -51,8 +54,12 @@ public final class MainController {
     private final MainView view;
     // NetCDF 数据解析器。
     private final NetcdfDatasetParser parser = new NetcdfDatasetParser();
+    // 波场变量配对识别器。
+    private final WaveVariablePairFinder waveVariablePairFinder = new WaveVariablePairFinder();
     // 后台离屏渲染器。
     private final TriangleImageRenderer imageRenderer = new TriangleImageRenderer();
+    // 波场箭头叠加绘制器。
+    private final WaveArrowOverlayRenderer waveArrowOverlayRenderer = new WaveArrowOverlayRenderer();
     // 海岸线叠加绘制器。
     private final CoastlineOverlayRenderer coastlineOverlayRenderer = new CoastlineOverlayRenderer();
     // 当前视口状态，包含缩放和平移信息。
@@ -77,6 +84,8 @@ public final class MainController {
     private RenderQueryContext latestRenderQueryContext;
     // 当前海岸线叠加层。
     private CoastlineOverlay currentOverlay;
+    // 当前数据集识别出的波场变量配对。
+    private WaveVariablePair activeWavePair;
     // 判定点击与拖拽的像素阈值。
     private static final double CLICK_TOLERANCE = 4.0;
 
@@ -114,6 +123,8 @@ public final class MainController {
         view.getApplyRangeButton().setDisable(true);
         view.getMinField().setDisable(true);
         view.getMaxField().setDisable(true);
+        view.getWaveArrowCheck().setDisable(true);
+        view.getWaveArrowCheck().setSelected(false);
         view.getRemoveDatasetButton().setDisable(true);
         // 设置初始状态提示。
         setStatus("Ready to open NetCDF file.");
@@ -203,6 +214,8 @@ public final class MainController {
             view.getMaxField().setDisable(autoRange);
             renderCurrentSelection();
         });
+        // 波场箭头开关变化时重绘当前视图。
+        view.getWaveArrowCheck().selectedProperty().addListener((obs, oldValue, newValue) -> renderCurrentSelection());
         // 手动应用范围时重新渲染。
         view.getApplyRangeButton().setOnAction(event -> renderCurrentSelection());
     }
@@ -391,6 +404,7 @@ public final class MainController {
         // 切换活动数据集时先重置与当前渲染相关的瞬时状态。
         currentDataset = item.dataset();
         currentVariable = null;
+        activeWavePair = waveVariablePairFinder.find(item.dataset()).orElse(null);
         latestRenderQueryContext = null;
         viewportState.reset();
         // 更新摘要、属性和警告面板。
@@ -400,6 +414,7 @@ public final class MainController {
         view.getCurrentVariableLabel().setText("Variable: -");
         view.getRangeInfoLabel().setText("Range: -");
         view.getLayerInfoLabel().setText("Layer: -");
+        updateWaveArrowControls();
         // 优先选中第一个可绘制变量，提升切换体验。
         VariableInfo preferredVariable = item.dataset().plottableVariables().stream().findFirst().orElse(null);
         if (preferredVariable != null) {
@@ -476,6 +491,7 @@ public final class MainController {
     private void clearActiveDatasetState() {
         currentDataset = null;
         currentVariable = null;
+        activeWavePair = null;
         latestRenderQueryContext = null;
         view.getVariableList().getItems().clear();
         view.getDatasetLabel().setText("No file loaded");
@@ -494,6 +510,8 @@ public final class MainController {
         view.getApplyRangeButton().setDisable(true);
         view.getMinField().setDisable(true);
         view.getMaxField().setDisable(true);
+        view.getWaveArrowCheck().setSelected(false);
+        view.getWaveArrowCheck().setDisable(true);
         renderPlaceholder("Open a NetCDF file to begin.");
         updateWindowTitle();
     }
@@ -583,6 +601,29 @@ public final class MainController {
             + mode);
     }
 
+    /*
+     * ========================================================================
+     * 步骤1：刷新波场箭头控件状态
+     * ========================================================================
+     * 目标：
+     *   1) 让界面只在数据集存在兼容的 wdir/wlen 时开放箭头开关
+     * 操作要点：
+     *   1) 无配对时强制取消勾选
+     *   2) 有配对时仅解除禁用，不改用户勾选状态
+     */
+    private void updateWaveArrowControls() {
+        // 1.1 根据当前数据集是否识别出波场变量配对决定控件可用性。
+        boolean available = activeWavePair != null;
+
+        // 1.2 没有波场变量配对时强制取消勾选，避免旧状态串到新数据集。
+        if (!available) {
+            view.getWaveArrowCheck().setSelected(false);
+        }
+
+        // 1.3 同步更新勾选框禁用状态。
+        view.getWaveArrowCheck().setDisable(!available);
+    }
+
     private void renderCurrentSelection() {
         // 获取主画布对象。
         Canvas canvas = view.getRenderCanvas();
@@ -623,6 +664,8 @@ public final class MainController {
             RangeStats displayRange = resolveRange(computedRange);
             // 读取当前选中的颜色表。
             ColorMap colorMap = colorMaps.getOrDefault(view.getColorMapCombo().getValue(), ColorMaps.viridis());
+            // 在当前状态下决定是否启用波场箭头叠加层。
+            WaveVariablePair wavePair = view.getWaveArrowCheck().isSelected() ? activeWavePair : null;
             // 确保视口已适配当前网格范围。
             viewportState.ensureFitted(currentDataset.mesh(), canvas.getWidth(), canvas.getHeight());
             // 生成新的渲染序号，供后台任务结果校验使用。
@@ -634,14 +677,21 @@ public final class MainController {
             view.getOverlayLabel().setVisible(true);
             setStatus("Rendering " + currentVariable.name() + " ...");
             // 在后台线程中执行真正的图像渲染。
-            renderAsync(requestId, layerIndex, values, colorMap, displayRange);
+            renderAsync(requestId, layerIndex, values, colorMap, displayRange, wavePair);
         } catch (Exception exception) {
             // 渲染准备阶段异常时，直接退回占位提示。
             renderPlaceholder("Could not render the selected variable: " + exception.getMessage());
         }
     }
 
-    private void renderAsync(long requestId, int layerIndex, double[] values, ColorMap colorMap, RangeStats displayRange) {
+    private void renderAsync(
+        long requestId,
+        int layerIndex,
+        double[] values,
+        ColorMap colorMap,
+        RangeStats displayRange,
+        WaveVariablePair wavePair
+    ) {
         // 快照当前画布与状态，避免后台线程期间界面对象变化。
         Canvas canvas = view.getRenderCanvas();
         ParsedDataset dataset = currentDataset;
@@ -650,10 +700,10 @@ public final class MainController {
         int height = Math.max(1, (int) Math.round(canvas.getHeight()));
         ViewportState.Snapshot snapshot = viewportState.snapshot();
 
-        // 后台任务只负责离屏生成图像。
-        Task<WritableImage> renderTask = new Task<>() {
+        // 后台任务负责离屏生成底图并准备可选的波场箭头数据。
+        Task<RenderFrame> renderTask = new Task<>() {
             @Override
-            protected WritableImage call() {
+            protected RenderFrame call() throws Exception {
                 // 先渲染为 BufferedImage，再转成 JavaFX 图像。
                 var bufferedImage = imageRenderer.render(
                     width,
@@ -666,7 +716,38 @@ public final class MainController {
                     variable.elementCentered(),
                     variable.fillValue()
                 );
-                return SwingFXUtils.toFXImage(bufferedImage, null);
+
+                // 再按需准备波场箭头叠加层所需的数据。
+                WaveOverlayFrame waveOverlayFrame = null;
+                String waveOverlayMessage = null;
+                if (wavePair != null) {
+                    try {
+                        int waveLayerIndex = wavePair.resolveLayerIndex(layerIndex);
+                        double[] directionValues = parser.readLayer(dataset, wavePair.directionVariable(), waveLayerIndex);
+                        double[] wavelengthValues = parser.readLayer(dataset, wavePair.wavelengthVariable(), waveLayerIndex);
+                        RangeStats wavelengthRange = RenderMath.computeRange(
+                            wavelengthValues,
+                            wavePair.wavelengthVariable().fillValue()
+                        );
+                        if (!wavelengthRange.empty()) {
+                            waveOverlayFrame = new WaveOverlayFrame(
+                                wavePair,
+                                waveLayerIndex,
+                                directionValues,
+                                wavelengthValues,
+                                wavelengthRange
+                            );
+                        }
+                    } catch (Exception waveError) {
+                        waveOverlayMessage = "Wave arrows skipped: " + waveError.getMessage();
+                    }
+                }
+
+                return new RenderFrame(
+                    SwingFXUtils.toFXImage(bufferedImage, null),
+                    waveOverlayFrame,
+                    waveOverlayMessage
+                );
             }
         };
 
@@ -676,10 +757,28 @@ public final class MainController {
             if (requestId != renderSequence || variable != currentVariable || dataset != currentDataset) {
                 return;
             }
+            RenderFrame frame = renderTask.getValue();
             // 清空旧画布内容。
             canvas.getGraphicsContext2D().clearRect(0, 0, canvas.getWidth(), canvas.getHeight());
             // 绘制新的离屏结果。
-            canvas.getGraphicsContext2D().drawImage(renderTask.getValue(), 0, 0, canvas.getWidth(), canvas.getHeight());
+            canvas.getGraphicsContext2D().drawImage(frame.image(), 0, 0, canvas.getWidth(), canvas.getHeight());
+            // 在海岸线之前绘制波场箭头叠加层。
+            if (frame.waveOverlayFrame() != null) {
+                waveArrowOverlayRenderer.render(
+                    canvas.getGraphicsContext2D(),
+                    dataset.mesh(),
+                    frame.waveOverlayFrame().directionValues(),
+                    frame.waveOverlayFrame().wavelengthValues(),
+                    snapshot,
+                    width,
+                    height,
+                    frame.waveOverlayFrame().pair().elementCentered(),
+                    frame.waveOverlayFrame().pair().directionVariable().fillValue(),
+                    frame.waveOverlayFrame().pair().wavelengthVariable().fillValue(),
+                    frame.waveOverlayFrame().layerIndex(),
+                    frame.waveOverlayFrame().wavelengthRange()
+                );
+            }
             // 在主图之上绘制海岸线叠加层。
             coastlineOverlayRenderer.render(canvas.getGraphicsContext2D(), currentOverlay, snapshot);
             // 刷新右侧色条。
@@ -708,7 +807,7 @@ public final class MainController {
             view.getExportButton().setDisable(false);
             view.getExportPngMenuItem().setDisable(false);
             // 更新状态栏。
-            setStatus("Rendered " + variable.name());
+            setStatus(frame.waveOverlayMessage() == null ? "Rendered " + variable.name() : frame.waveOverlayMessage());
         });
 
         // 渲染失败时退回错误占位信息。
@@ -948,6 +1047,22 @@ public final class MainController {
         boolean elementCentered,
         Double fillValue,
         ViewportState.Snapshot snapshot
+    ) {
+    }
+
+    private record RenderFrame(
+        WritableImage image,
+        WaveOverlayFrame waveOverlayFrame,
+        String waveOverlayMessage
+    ) {
+    }
+
+    private record WaveOverlayFrame(
+        WaveVariablePair pair,
+        int layerIndex,
+        double[] directionValues,
+        double[] wavelengthValues,
+        RangeStats wavelengthRange
     ) {
     }
 
