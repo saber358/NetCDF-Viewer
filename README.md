@@ -73,6 +73,18 @@
 
 ![规则格网风场风羽](docs/images/readme/preview-structured-wind-barbs.png)
 
+### 三角网标量渲染：`donghai.nc`
+
+`donghai.nc` 的分层流速变量平面渲染，用来展示非结构化三角网底图、分层滑块和海域边界形态。
+
+![三角网标量渲染 donghai](docs/images/readme/preview-donghai-h-center.png)
+
+### 三角网标量渲染：`ydw.nc`
+
+`ydw.nc` 的三角网标量场渲染，用来展示节点 / 单元变量在局部海域范围内的空间分布效果。
+
+![三角网标量渲染 ydw](docs/images/readme/preview-ydw-h-center.png)
+
 ### 三角网海流流线
 
 三角网 `u` / `v` 海流场叠加，保留原始海域边界和局部曲线流动结构。
