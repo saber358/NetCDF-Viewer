@@ -262,12 +262,14 @@ public final class WaveArrowOverlayRenderer {
         }
 
         // 2.2 按固定屏幕步长逐点采样，保持箭头密度稳定。
+        TriangleSpatialIndex spatialIndex = TriangleSpatialIndexCache.get(mesh);
         List<ArrowGlyph> arrows = new ArrayList<>();
         for (int screenY = SAMPLE_SPACING / 2; screenY < height; screenY += SAMPLE_SPACING) {
             for (int screenX = SAMPLE_SPACING / 2; screenX < width; screenX += SAMPLE_SPACING) {
                 // 2.3 在同一个采样点分别查询波向和波长。
                 MeshPointQuery.Result directionResult = MeshPointQuery.query(
                     mesh,
+                    spatialIndex,
                     directionValues,
                     snapshot,
                     screenX,
@@ -278,6 +280,7 @@ public final class WaveArrowOverlayRenderer {
                 );
                 MeshPointQuery.Result wavelengthResult = MeshPointQuery.query(
                     mesh,
+                    spatialIndex,
                     wavelengthValues,
                     snapshot,
                     screenX,

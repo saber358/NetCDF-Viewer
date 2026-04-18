@@ -66,6 +66,7 @@ public final class FlowLineGenerator {
         }
 
         // 1.2 按屏幕占用网格记录已接受流线，减少重复种子生成。
+        TriangleSpatialIndex spatialIndex = TriangleSpatialIndexCache.get(mesh);
         boolean[][] occupancy = new boolean[
             Math.max(1, (int) Math.ceil(height / (double) OCCUPANCY_CELL_SIZE))
         ][
@@ -82,6 +83,7 @@ public final class FlowLineGenerator {
 
                 FlowVectorQuery.Result seedVector = FlowVectorQuery.query(
                     mesh,
+                    spatialIndex,
                     uValues,
                     vValues,
                     snapshot,
@@ -98,6 +100,7 @@ public final class FlowLineGenerator {
 
                 FlowLine line = buildLineFromSeed(
                     mesh,
+                    spatialIndex,
                     uValues,
                     vValues,
                     snapshot,
@@ -242,6 +245,7 @@ public final class FlowLineGenerator {
      */
     private FlowLine buildLineFromSeed(
         MeshData mesh,
+        TriangleSpatialIndex spatialIndex,
         double[] uValues,
         double[] vValues,
         ViewportState.Snapshot snapshot,
@@ -261,6 +265,7 @@ public final class FlowLineGenerator {
         // 2.1 先沿速度方向和反方向分别积分。
         List<FlowPoint> backward = integrateDirection(
             mesh,
+            spatialIndex,
             uValues,
             vValues,
             snapshot,
@@ -276,6 +281,7 @@ public final class FlowLineGenerator {
         );
         List<FlowPoint> forward = integrateDirection(
             mesh,
+            spatialIndex,
             uValues,
             vValues,
             snapshot,
@@ -402,6 +408,7 @@ public final class FlowLineGenerator {
      */
     private List<FlowPoint> integrateDirection(
         MeshData mesh,
+        TriangleSpatialIndex spatialIndex,
         double[] uValues,
         double[] vValues,
         ViewportState.Snapshot snapshot,
@@ -436,6 +443,7 @@ public final class FlowLineGenerator {
             double sampleScreenY = snapshot.screenY(worldY);
             FlowVectorQuery.Result vector = FlowVectorQuery.query(
                 mesh,
+                spatialIndex,
                 uValues,
                 vValues,
                 snapshot,

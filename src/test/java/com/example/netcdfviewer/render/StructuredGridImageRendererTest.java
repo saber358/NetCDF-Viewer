@@ -47,4 +47,57 @@ class StructuredGridImageRendererTest {
         assertEquals(120, image.getHeight());
         assertTrue(image.getRGB(100, 60) != 0);
     }
+
+    @Test
+    void parallelRenderMatchesSequentialRenderForRectilinearGrid() {
+        StructuredGridDomain domain = new StructuredGridDomain(
+            new StructuredGridData(
+                new CoordinateBinding("binding:lon:lat", "lon", "lat", List.of("x", "y"), false),
+                new double[]{0.0, 1.0, 2.0, 3.0},
+                new double[]{0.0, 1.0, 2.0},
+                null,
+                null,
+                4,
+                3
+            ),
+            new CoordinateBinding("binding:lon:lat", "lon", "lat", List.of("x", "y"), false)
+        );
+        ViewportState.Snapshot snapshot = new ViewportState.Snapshot(80.0, 0.0, 160.0);
+        double[] values = new double[]{
+            1.0, 2.0, 3.0, 4.0,
+            5.0, 6.0, 7.0, 8.0,
+            9.0, 10.0, 11.0, 12.0
+        };
+
+        BufferedImage sequentialImage = renderer.renderSequential(
+            240,
+            160,
+            domain,
+            values,
+            ColorMaps.viridis(),
+            new RangeStats(1.0, 12.0, 12),
+            snapshot,
+            false,
+            null
+        );
+        BufferedImage parallelImage = renderer.render(
+            240,
+            160,
+            domain,
+            values,
+            ColorMaps.viridis(),
+            new RangeStats(1.0, 12.0, 12),
+            snapshot,
+            false,
+            null
+        );
+
+        assertEquals(sequentialImage.getWidth(), parallelImage.getWidth());
+        assertEquals(sequentialImage.getHeight(), parallelImage.getHeight());
+        for (int y = 0; y < sequentialImage.getHeight(); y++) {
+            for (int x = 0; x < sequentialImage.getWidth(); x++) {
+                assertEquals(sequentialImage.getRGB(x, y), parallelImage.getRGB(x, y));
+            }
+        }
+    }
 }

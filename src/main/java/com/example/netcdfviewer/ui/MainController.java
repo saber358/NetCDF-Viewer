@@ -50,14 +50,22 @@ import javafx.scene.input.TransferMode;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -117,7 +125,7 @@ public final class MainController {
     // 最近一次打开或导出的目录。
     private Path lastDirectory = Paths.get(System.getProperty("user.home", "."));
     // 渲染序号，用于丢弃旧的后台渲染结果。
-    private long renderSequence;
+    private volatile long renderSequence;
     // 最近一次成功渲染的查询上下文。
     private RenderQueryContext latestRenderQueryContext;
     // 当前海岸线叠加层。
@@ -140,6 +148,24 @@ public final class MainController {
     private Timeline flowAnimationTimeline;
     // 当前流线亮带动画相位。
     private double flowAnimationPhase;
+    // 串行调度渲染任务的后台线程池。
+    private final ThreadPoolExecutor renderTaskExecutor = new ThreadPoolExecutor(
+        1,
+        1,
+        0L,
+        TimeUnit.MILLISECONDS,
+        new LinkedBlockingQueue<>(),
+        namedThreadFactory("render-dispatch")
+    );
+    // 负责底图和叠加层并行计算的线程池。
+    private final ExecutorService renderComputeExecutor = new ThreadPoolExecutor(
+        Math.max(2, Runtime.getRuntime().availableProcessors() - 1),
+        Math.max(2, Runtime.getRuntime().availableProcessors() - 1),
+        30L,
+        TimeUnit.SECONDS,
+        new LinkedBlockingQueue<>(),
+        namedThreadFactory("render-compute")
+    );
     // 是否正在内部刷新坐标控件。
     private boolean updatingCoordinateControls;
     // 判定点击与拖拽的像素阈值。
@@ -190,6 +216,8 @@ public final class MainController {
         setStatus("Ready to open NetCDF file.");
         // 启动时默认启用内置海岸线。
         initializeBuiltInCoastline();
+        // 窗口关闭时释放渲染线程池。
+        stage.setOnHidden(event -> shutdownRenderExecutors());
 
         // 绑定画布尺寸变化监听。
         bindCanvasSize();
@@ -1246,198 +1274,68 @@ public final class MainController {
         int height = Math.max(1, (int) Math.round(canvas.getHeight()));
         ViewportState.Snapshot snapshot = viewportState.snapshot();
 
-        // 后台任务负责离屏生成底图并准备可选的波场箭头数据。
+        /*
+         * ========================================================================
+         * 步骤1：调度后台渲染任务
+         * ========================================================================
+         * 目标：
+         *   1) 使用固定线程池复用渲染线程
+         *   2) 将底图、波浪、海流、风场拆成并行子任务
+         * 操作要点：
+         *   1) 渲染任务仍由 JavaFX Task 承载回调
+         *   2) 计算密集部分统一分发到共享计算线程池
+         */
         Task<RenderFrame> renderTask = new Task<>() {
             @Override
             protected RenderFrame call() throws Exception {
-                // 先渲染为 BufferedImage，再转成 JavaFX 图像。
-                var bufferedImage = spatialDomain.kind() == SpatialDomain.Kind.STRUCTURED_GRID
-                    ? structuredImageRenderer.render(
-                        width,
-                        height,
-                        (StructuredGridDomain) spatialDomain,
+                // 1.1 底图和各类叠加层并行构建，最后统一汇总结果。
+                CompletableFuture<BufferedImage> baseImageFuture = CompletableFuture.supplyAsync(
+                    () -> buildBaseImage(
+                        spatialDomain,
+                        dataset,
+                        variable,
                         values,
                         colorMap,
                         displayRange,
                         snapshot,
-                        variable.cellCentered(),
-                        variable.fillValue()
-                    )
-                    : imageRenderer.render(
                         width,
-                        height,
-                        dataset.mesh(),
-                        values,
-                        colorMap,
-                        displayRange,
-                        snapshot,
-                        variable.elementCentered(),
-                        variable.fillValue()
-                    );
+                        height
+                    ),
+                    renderComputeExecutor
+                );
+                CompletableFuture<OverlayBuildResult<WaveOverlayFrame>> waveFuture = scheduleWaveOverlayBuild(
+                    dataset,
+                    wavePair,
+                    layerIndex,
+                    snapshot
+                );
+                CompletableFuture<OverlayBuildResult<FlowOverlayFrame>> flowFuture = scheduleFlowOverlayBuild(
+                    dataset,
+                    flowPair,
+                    layerIndex,
+                    snapshot,
+                    width,
+                    height
+                );
+                CompletableFuture<OverlayBuildResult<WindOverlayFrame>> windFuture = scheduleWindOverlayBuild(
+                    dataset,
+                    windPair,
+                    layerIndex,
+                    snapshot,
+                    width,
+                    height
+                );
 
-                // 再按需准备波场箭头叠加层所需的数据。
-                WaveOverlayFrame waveOverlayFrame = null;
-                FlowOverlayFrame flowOverlayFrame = null;
-                WindOverlayFrame windOverlayFrame = null;
-                String overlayMessage = null;
-                if (wavePair != null) {
-                    try {
-                        int waveLayerIndex = wavePair.resolveLayerIndex(layerIndex);
-                        double[] directionValues = parser.readLayer(dataset, wavePair.directionVariable(), waveLayerIndex);
-                        double[] wavelengthValues = parser.readLayer(dataset, wavePair.wavelengthVariable(), waveLayerIndex);
-                        double[] waveHeightValues = wavePair.optionalWaveHeightVariable().isPresent()
-                            ? parser.readLayer(dataset, wavePair.optionalWaveHeightVariable().orElseThrow(), waveLayerIndex)
-                            : null;
-                        RangeStats wavelengthRange = wavePair.vectorMode()
-                            ? (wavePair.optionalWaveHeightVariable().isPresent()
-                                ? RenderMath.computeRange(
-                                    waveHeightValues,
-                                    wavePair.optionalWaveHeightVariable().orElseThrow().fillValue()
-                                )
-                                : null)
-                            : RenderMath.computeRange(
-                                wavelengthValues,
-                                wavePair.wavelengthVariable().fillValue()
-                            );
-                        if ((wavelengthRange != null && !wavelengthRange.empty()) || wavePair.vectorMode()) {
-                            waveOverlayFrame = new WaveOverlayFrame(
-                                wavePair,
-                                waveLayerIndex,
-                                directionValues,
-                                wavelengthValues,
-                                waveHeightValues,
-                                wavelengthRange,
-                                wavePair.directionVariable().geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
-                                    ? resolveStructuredDomainForVariable(dataset, wavePair.directionVariable())
-                                    : null,
-                                wavePair.wavelengthVariable().geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
-                                    ? resolveStructuredDomainForVariable(dataset, wavePair.wavelengthVariable())
-                                    : null,
-                                wavePair.optionalWaveHeightVariable().isPresent()
-                                    ? resolveStructuredDomainForVariable(dataset, wavePair.optionalWaveHeightVariable().orElseThrow())
-                                    : null,
-                                snapshot
-                            );
-                        }
-                    } catch (Exception waveError) {
-                        overlayMessage = "Wave arrows skipped: " + waveError.getMessage();
-                    }
-                }
-
-                // 再按需准备流线叠加层所需的数据。
-                if (flowPair != null) {
-                    try {
-                        int flowLayerIndex = flowPair.resolveLayerIndex(layerIndex);
-                        double[] uValues = parser.readLayer(dataset, flowPair.eastwardVariable(), flowLayerIndex);
-                        double[] vValues = parser.readLayer(dataset, flowPair.northwardVariable(), flowLayerIndex);
-                        List<FlowLineGenerator.FlowLine> lines = flowPair.eastwardVariable().geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
-                            ? flowLineGenerator.generateStructured(
-                                resolveStructuredDomainForVariable(dataset, flowPair.eastwardVariable()),
-                                resolveStructuredDomainForVariable(dataset, flowPair.northwardVariable()),
-                                uValues,
-                                vValues,
-                                snapshot,
-                                width,
-                                height,
-                                flowPair.eastwardVariable().cellCentered(),
-                                flowPair.northwardVariable().cellCentered(),
-                                flowPair.eastwardVariable().fillValue(),
-                                flowPair.northwardVariable().fillValue(),
-                                flowLayerIndex
-                            )
-                            : flowLineGenerator.generate(
-                                dataset.mesh(),
-                                uValues,
-                                vValues,
-                                snapshot,
-                                width,
-                                height,
-                                flowPair.elementCentered(),
-                                flowPair.eastwardVariable().fillValue(),
-                                flowPair.northwardVariable().fillValue(),
-                                flowLayerIndex
-                            );
-                        if (!lines.isEmpty()) {
-                            flowOverlayFrame = new FlowOverlayFrame(
-                                flowPair,
-                                flowLayerIndex,
-                                lines,
-                                snapshot
-                            );
-                        }
-                    } catch (Exception flowError) {
-                        overlayMessage = overlayMessage == null
-                            ? "Flow lines skipped: " + flowError.getMessage()
-                            : overlayMessage + "; Flow lines skipped: " + flowError.getMessage();
-                    }
-                }
-
-                /*
-                 * ========================================================================
-                 * 步骤3：按需准备风羽叠加层
-                 * ========================================================================
-                 * 目标：
-                 *   1) 为三角网和规则格网生成可直接绘制的风羽标记集合
-                 * 操作要点：
-                 *   1) 后台线程中一次性完成采样
-                 *   2) 界面线程只复用缓存结果绘制
-                 */
-                if (windPair != null) {
-                    try {
-                        // 3.1 解析当前风场应读取的层号。
-                        int windLayerIndex = windPair.resolveLayerIndex(layerIndex);
-                        // 3.2 读取东向和北向风速分量。
-                        double[] uValues = parser.readLayer(dataset, windPair.eastwardVariable(), windLayerIndex);
-                        double[] vValues = parser.readLayer(dataset, windPair.northwardVariable(), windLayerIndex);
-                        // 3.3 按网格类型采样出风羽标记。
-                        List<WindBarbOverlayRenderer.WindBarbGlyph> glyphs = windPair.eastwardVariable().geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
-                            ? windBarbOverlayRenderer.sampleStructuredBarbs(
-                                resolveStructuredDomainForVariable(dataset, windPair.eastwardVariable()),
-                                resolveStructuredDomainForVariable(dataset, windPair.northwardVariable()),
-                                uValues,
-                                vValues,
-                                snapshot,
-                                width,
-                                height,
-                                windPair.eastwardVariable().cellCentered(),
-                                windPair.northwardVariable().cellCentered(),
-                                windPair.eastwardVariable().fillValue(),
-                                windPair.northwardVariable().fillValue(),
-                                windLayerIndex
-                            )
-                            : windBarbOverlayRenderer.sampleBarbs(
-                                dataset.mesh(),
-                                uValues,
-                                vValues,
-                                snapshot,
-                                width,
-                                height,
-                                windPair.elementCentered(),
-                                windPair.eastwardVariable().fillValue(),
-                                windPair.northwardVariable().fillValue(),
-                                windLayerIndex
-                            );
-                        // 3.4 有可绘制标记时缓存到渲染帧。
-                        if (!glyphs.isEmpty()) {
-                            windOverlayFrame = new WindOverlayFrame(
-                                windPair,
-                                windLayerIndex,
-                                glyphs
-                            );
-                        }
-                    } catch (Exception windError) {
-                        overlayMessage = overlayMessage == null
-                            ? "Wind barbs skipped: " + windError.getMessage()
-                            : overlayMessage + "; Wind barbs skipped: " + windError.getMessage();
-                    }
-                }
-
+                BufferedImage bufferedImage = baseImageFuture.join();
+                OverlayBuildResult<WaveOverlayFrame> waveResult = waveFuture.join();
+                OverlayBuildResult<FlowOverlayFrame> flowResult = flowFuture.join();
+                OverlayBuildResult<WindOverlayFrame> windResult = windFuture.join();
                 return new RenderFrame(
                     SwingFXUtils.toFXImage(bufferedImage, null),
-                    waveOverlayFrame,
-                    flowOverlayFrame,
-                    windOverlayFrame,
-                    overlayMessage
+                    waveResult.frame(),
+                    flowResult.frame(),
+                    windResult.frame(),
+                    mergeOverlayMessages(waveResult.message(), flowResult.message(), windResult.message())
                 );
             }
         };
@@ -1449,6 +1347,9 @@ public final class MainController {
                 return;
             }
             RenderFrame frame = renderTask.getValue();
+            if (frame == null) {
+                return;
+            }
             latestBaseImage = frame.image();
             latestWaveOverlayFrame = frame.waveOverlayFrame();
             latestFlowOverlayFrame = frame.flowOverlayFrame();
@@ -1482,7 +1383,9 @@ public final class MainController {
             view.getExportButton().setDisable(false);
             view.getExportPngMenuItem().setDisable(false);
             // 更新状态栏。
-            setStatus(frame.overlayMessage() == null ? "Rendered " + variable.name() : frame.overlayMessage());
+            setStatus(frame.overlayMessage() == null || frame.overlayMessage().isBlank()
+                ? "Rendered " + variable.name()
+                : frame.overlayMessage());
         });
 
         // 渲染失败时退回错误占位信息。
@@ -1495,10 +1398,362 @@ public final class MainController {
             renderPlaceholder("Could not render the selected variable: " + (error == null ? "unknown error" : error.getMessage()));
         });
 
-        // 启动后台渲染线程。
-        Thread worker = new Thread(renderTask, "render-" + requestId);
-        worker.setDaemon(true);
-        worker.start();
+        // 1.2 复用固定线程池执行渲染任务，并清空过期排队任务。
+        renderTaskExecutor.getQueue().clear();
+        renderTaskExecutor.execute(renderTask);
+    }
+
+    /*
+     * ========================================================================
+     * 步骤2：构建标量底图
+     * ========================================================================
+     * 目标：
+     *   1) 在后台线程中生成标量底图
+     *   2) 规则格网场景复用共享计算线程池做并行栅格化
+     * 操作要点：
+     *   1) 三角网继续走原有三角形离屏渲染
+     *   2) 规则格网改走像素缓冲并行写入
+     */
+    private BufferedImage buildBaseImage(
+        SpatialDomain spatialDomain,
+        ParsedDataset dataset,
+        VariableInfo variable,
+        double[] values,
+        ColorMap colorMap,
+        RangeStats displayRange,
+        ViewportState.Snapshot snapshot,
+        int width,
+        int height
+    ) {
+        logger.info(() -> "开始构建标量底图, variable=" + variable.name());
+
+        BufferedImage image = spatialDomain.kind() == SpatialDomain.Kind.STRUCTURED_GRID
+            ? structuredImageRenderer.render(
+                width,
+                height,
+                (StructuredGridDomain) spatialDomain,
+                values,
+                colorMap,
+                displayRange,
+                snapshot,
+                variable.cellCentered(),
+                variable.fillValue()
+            )
+            : imageRenderer.render(
+                width,
+                height,
+                dataset.mesh(),
+                values,
+                colorMap,
+                displayRange,
+                snapshot,
+                variable.elementCentered(),
+                variable.fillValue()
+            );
+
+        logger.info(() -> "标量底图构建结束, variable=" + variable.name());
+        return image;
+    }
+
+    /*
+     * ========================================================================
+     * 步骤3：调度波浪叠加层构建
+     * ========================================================================
+     * 目标：
+     *   1) 根据当前是否启用波浪叠加决定是否提交任务
+     * 操作要点：
+     *   1) 无波浪配对时直接返回空结果
+     *   2) 有配对时分发到共享计算线程池
+     */
+    private CompletableFuture<OverlayBuildResult<WaveOverlayFrame>> scheduleWaveOverlayBuild(
+        ParsedDataset dataset,
+        WaveVariablePair wavePair,
+        int layerIndex,
+        ViewportState.Snapshot snapshot
+    ) {
+        if (wavePair == null) {
+            return CompletableFuture.completedFuture(new OverlayBuildResult<>(null, null));
+        }
+        return CompletableFuture.supplyAsync(
+            () -> buildWaveOverlayFrame(dataset, wavePair, layerIndex, snapshot),
+            renderComputeExecutor
+        );
+    }
+
+    /*
+     * ========================================================================
+     * 步骤4：调度海流叠加层构建
+     * ========================================================================
+     * 目标：
+     *   1) 根据当前是否启用海流叠加决定是否提交任务
+     * 操作要点：
+     *   1) 无速度变量配对时直接返回空结果
+     *   2) 有配对时分发到共享计算线程池
+     */
+    private CompletableFuture<OverlayBuildResult<FlowOverlayFrame>> scheduleFlowOverlayBuild(
+        ParsedDataset dataset,
+        VelocityVariablePair flowPair,
+        int layerIndex,
+        ViewportState.Snapshot snapshot,
+        int width,
+        int height
+    ) {
+        if (flowPair == null) {
+            return CompletableFuture.completedFuture(new OverlayBuildResult<>(null, null));
+        }
+        return CompletableFuture.supplyAsync(
+            () -> buildFlowOverlayFrame(dataset, flowPair, layerIndex, snapshot, width, height),
+            renderComputeExecutor
+        );
+    }
+
+    /*
+     * ========================================================================
+     * 步骤5：调度风场叠加层构建
+     * ========================================================================
+     * 目标：
+     *   1) 根据当前是否启用风场叠加决定是否提交任务
+     * 操作要点：
+     *   1) 无风场变量配对时直接返回空结果
+     *   2) 有配对时分发到共享计算线程池
+     */
+    private CompletableFuture<OverlayBuildResult<WindOverlayFrame>> scheduleWindOverlayBuild(
+        ParsedDataset dataset,
+        WindVariablePair windPair,
+        int layerIndex,
+        ViewportState.Snapshot snapshot,
+        int width,
+        int height
+    ) {
+        if (windPair == null) {
+            return CompletableFuture.completedFuture(new OverlayBuildResult<>(null, null));
+        }
+        return CompletableFuture.supplyAsync(
+            () -> buildWindOverlayFrame(dataset, windPair, layerIndex, snapshot, width, height),
+            renderComputeExecutor
+        );
+    }
+
+    /*
+     * ========================================================================
+     * 步骤6：构建波浪叠加层
+     * ========================================================================
+     * 目标：
+     *   1) 读取波浪变量层并构造缓存帧
+     * 操作要点：
+     *   1) 兼容极坐标波浪和向量波浪两种模式
+     *   2) 出错时不打断整次渲染，只返回提示消息
+     */
+    private OverlayBuildResult<WaveOverlayFrame> buildWaveOverlayFrame(
+        ParsedDataset dataset,
+        WaveVariablePair wavePair,
+        int layerIndex,
+        ViewportState.Snapshot snapshot
+    ) {
+        logger.info(() -> "开始构建波浪叠加层, directionVariable=" + wavePair.directionVariable().name());
+
+        try {
+            int waveLayerIndex = wavePair.resolveLayerIndex(layerIndex);
+            double[] directionValues = parser.readLayer(dataset, wavePair.directionVariable(), waveLayerIndex);
+            double[] wavelengthValues = parser.readLayer(dataset, wavePair.wavelengthVariable(), waveLayerIndex);
+            double[] waveHeightValues = wavePair.optionalWaveHeightVariable().isPresent()
+                ? parser.readLayer(dataset, wavePair.optionalWaveHeightVariable().orElseThrow(), waveLayerIndex)
+                : null;
+            RangeStats wavelengthRange = wavePair.vectorMode()
+                ? (wavePair.optionalWaveHeightVariable().isPresent()
+                    ? RenderMath.computeRange(
+                        waveHeightValues,
+                        wavePair.optionalWaveHeightVariable().orElseThrow().fillValue()
+                    )
+                    : null)
+                : RenderMath.computeRange(
+                    wavelengthValues,
+                    wavePair.wavelengthVariable().fillValue()
+                );
+            if ((wavelengthRange == null || wavelengthRange.empty()) && !wavePair.vectorMode()) {
+                logger.info("波浪叠加层构建结束, framePresent=false");
+                return new OverlayBuildResult<>(null, null);
+            }
+
+            WaveOverlayFrame frame = new WaveOverlayFrame(
+                wavePair,
+                waveLayerIndex,
+                directionValues,
+                wavelengthValues,
+                waveHeightValues,
+                wavelengthRange,
+                wavePair.directionVariable().geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
+                    ? resolveStructuredDomainForVariable(dataset, wavePair.directionVariable())
+                    : null,
+                wavePair.wavelengthVariable().geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
+                    ? resolveStructuredDomainForVariable(dataset, wavePair.wavelengthVariable())
+                    : null,
+                wavePair.optionalWaveHeightVariable().isPresent()
+                    ? resolveStructuredDomainForVariable(dataset, wavePair.optionalWaveHeightVariable().orElseThrow())
+                    : null,
+                snapshot
+            );
+            logger.info("波浪叠加层构建结束, framePresent=true");
+            return new OverlayBuildResult<>(frame, null);
+        } catch (Exception exception) {
+            logger.info(() -> "波浪叠加层构建结束, framePresent=false, reason=" + exception.getMessage());
+            return new OverlayBuildResult<>(null, "Wave arrows skipped: " + exception.getMessage());
+        }
+    }
+
+    /*
+     * ========================================================================
+     * 步骤7：构建海流叠加层
+     * ========================================================================
+     * 目标：
+     *   1) 读取速度变量层并生成流线缓存帧
+     * 操作要点：
+     *   1) 三角网和规则格网共用统一入口
+     *   2) 出错时不打断整次渲染，只返回提示消息
+     */
+    private OverlayBuildResult<FlowOverlayFrame> buildFlowOverlayFrame(
+        ParsedDataset dataset,
+        VelocityVariablePair flowPair,
+        int layerIndex,
+        ViewportState.Snapshot snapshot,
+        int width,
+        int height
+    ) {
+        logger.info(() -> "开始构建海流叠加层, eastwardVariable=" + flowPair.eastwardVariable().name());
+
+        try {
+            int flowLayerIndex = flowPair.resolveLayerIndex(layerIndex);
+            double[] uValues = parser.readLayer(dataset, flowPair.eastwardVariable(), flowLayerIndex);
+            double[] vValues = parser.readLayer(dataset, flowPair.northwardVariable(), flowLayerIndex);
+            List<FlowLineGenerator.FlowLine> lines = flowPair.eastwardVariable().geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
+                ? flowLineGenerator.generateStructured(
+                    resolveStructuredDomainForVariable(dataset, flowPair.eastwardVariable()),
+                    resolveStructuredDomainForVariable(dataset, flowPair.northwardVariable()),
+                    uValues,
+                    vValues,
+                    snapshot,
+                    width,
+                    height,
+                    flowPair.eastwardVariable().cellCentered(),
+                    flowPair.northwardVariable().cellCentered(),
+                    flowPair.eastwardVariable().fillValue(),
+                    flowPair.northwardVariable().fillValue(),
+                    flowLayerIndex
+                )
+                : flowLineGenerator.generate(
+                    dataset.mesh(),
+                    uValues,
+                    vValues,
+                    snapshot,
+                    width,
+                    height,
+                    flowPair.elementCentered(),
+                    flowPair.eastwardVariable().fillValue(),
+                    flowPair.northwardVariable().fillValue(),
+                    flowLayerIndex
+                );
+            if (lines.isEmpty()) {
+                logger.info("海流叠加层构建结束, framePresent=false");
+                return new OverlayBuildResult<>(null, null);
+            }
+
+            FlowOverlayFrame frame = new FlowOverlayFrame(
+                flowPair,
+                flowLayerIndex,
+                lines,
+                snapshot
+            );
+            logger.info("海流叠加层构建结束, framePresent=true");
+            return new OverlayBuildResult<>(frame, null);
+        } catch (Exception exception) {
+            logger.info(() -> "海流叠加层构建结束, framePresent=false, reason=" + exception.getMessage());
+            return new OverlayBuildResult<>(null, "Flow lines skipped: " + exception.getMessage());
+        }
+    }
+
+    /*
+     * ========================================================================
+     * 步骤8：构建风场叠加层
+     * ========================================================================
+     * 目标：
+     *   1) 读取风场变量层并生成风羽缓存帧
+     * 操作要点：
+     *   1) 三角网和规则格网共用统一入口
+     *   2) 出错时不打断整次渲染，只返回提示消息
+     */
+    private OverlayBuildResult<WindOverlayFrame> buildWindOverlayFrame(
+        ParsedDataset dataset,
+        WindVariablePair windPair,
+        int layerIndex,
+        ViewportState.Snapshot snapshot,
+        int width,
+        int height
+    ) {
+        logger.info(() -> "开始构建风场叠加层, eastwardVariable=" + windPair.eastwardVariable().name());
+
+        try {
+            int windLayerIndex = windPair.resolveLayerIndex(layerIndex);
+            double[] uValues = parser.readLayer(dataset, windPair.eastwardVariable(), windLayerIndex);
+            double[] vValues = parser.readLayer(dataset, windPair.northwardVariable(), windLayerIndex);
+            List<WindBarbOverlayRenderer.WindBarbGlyph> glyphs = windPair.eastwardVariable().geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
+                ? windBarbOverlayRenderer.sampleStructuredBarbs(
+                    resolveStructuredDomainForVariable(dataset, windPair.eastwardVariable()),
+                    resolveStructuredDomainForVariable(dataset, windPair.northwardVariable()),
+                    uValues,
+                    vValues,
+                    snapshot,
+                    width,
+                    height,
+                    windPair.eastwardVariable().cellCentered(),
+                    windPair.northwardVariable().cellCentered(),
+                    windPair.eastwardVariable().fillValue(),
+                    windPair.northwardVariable().fillValue(),
+                    windLayerIndex
+                )
+                : windBarbOverlayRenderer.sampleBarbs(
+                    dataset.mesh(),
+                    uValues,
+                    vValues,
+                    snapshot,
+                    width,
+                    height,
+                    windPair.elementCentered(),
+                    windPair.eastwardVariable().fillValue(),
+                    windPair.northwardVariable().fillValue(),
+                    windLayerIndex
+                );
+            if (glyphs.isEmpty()) {
+                logger.info("风场叠加层构建结束, framePresent=false");
+                return new OverlayBuildResult<>(null, null);
+            }
+
+            WindOverlayFrame frame = new WindOverlayFrame(
+                windPair,
+                windLayerIndex,
+                glyphs
+            );
+            logger.info("风场叠加层构建结束, framePresent=true");
+            return new OverlayBuildResult<>(frame, null);
+        } catch (Exception exception) {
+            logger.info(() -> "风场叠加层构建结束, framePresent=false, reason=" + exception.getMessage());
+            return new OverlayBuildResult<>(null, "Wind barbs skipped: " + exception.getMessage());
+        }
+    }
+
+    /*
+     * ========================================================================
+     * 步骤9：合并叠加层提示消息
+     * ========================================================================
+     * 目标：
+     *   1) 将多个叠加层异常提示收敛成一条状态栏消息
+     * 操作要点：
+     *   1) 过滤空消息
+     *   2) 用分号连接多条提示
+     */
+    private String mergeOverlayMessages(String... messages) {
+        return Arrays.stream(messages)
+            .filter(message -> message != null && !message.isBlank())
+            .collect(Collectors.joining("; "));
     }
 
     /*
@@ -1846,6 +2101,23 @@ public final class MainController {
         }
     }
 
+    /*
+     * ========================================================================
+     * 步骤10：关闭渲染线程池
+     * ========================================================================
+     * 目标：
+     *   1) 在窗口关闭时释放渲染相关线程资源
+     * 操作要点：
+     *   1) 串行调度池和计算池一起关闭
+     *   2) 仅做幂等关闭，不抛额外异常
+     */
+    private void shutdownRenderExecutors() {
+        logger.info("开始关闭渲染线程池...");
+        renderTaskExecutor.shutdownNow();
+        renderComputeExecutor.shutdownNow();
+        logger.info("渲染线程池关闭完成");
+    }
+
     private void setStatus(String text) {
         // 更新状态栏文本。
         view.getStatusLabel().setText(text);
@@ -1889,6 +2161,24 @@ public final class MainController {
     private String format(double value) {
         // 所有数值显示统一保留四位小数。
         return String.format(Locale.ROOT, "%.4f", value);
+    }
+
+    /*
+     * ========================================================================
+     * 步骤11：创建命名线程工厂
+     * ========================================================================
+     * 目标：
+     *   1) 为渲染线程池生成可识别的守护线程
+     * 操作要点：
+     *   1) 统一线程名前缀
+     *   2) 全部线程设置为 daemon
+     */
+    private static ThreadFactory namedThreadFactory(String prefix) {
+        return runnable -> {
+            Thread thread = new Thread(runnable, prefix + "-" + System.nanoTime());
+            thread.setDaemon(true);
+            return thread;
+        };
     }
 
     private Path chooseSavePngFile() {
@@ -1976,6 +2266,9 @@ public final class MainController {
         int layerIndex,
         List<WindBarbOverlayRenderer.WindBarbGlyph> glyphs
     ) {
+    }
+
+    private record OverlayBuildResult<T>(T frame, String message) {
     }
 
     private static final class VariableCell extends ListCell<VariableInfo> {

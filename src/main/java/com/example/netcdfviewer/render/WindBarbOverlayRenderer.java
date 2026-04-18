@@ -79,11 +79,13 @@ public final class WindBarbOverlayRenderer {
             logger.info("三角网风羽采样输入无效，返回空结果");
             return List.of();
         }
+        TriangleSpatialIndex spatialIndex = TriangleSpatialIndexCache.get(mesh);
         List<WindBarbGlyph> glyphs = new ArrayList<>();
         for (int screenY = SAMPLE_SPACING / 2; screenY < height; screenY += SAMPLE_SPACING) {
             for (int screenX = SAMPLE_SPACING / 2; screenX < width; screenX += SAMPLE_SPACING) {
                 FlowVectorQuery.Result result = FlowVectorQuery.query(
                     mesh,
+                    spatialIndex,
                     uValues,
                     vValues,
                     snapshot,

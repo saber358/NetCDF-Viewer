@@ -3,6 +3,7 @@ package com.example.netcdfviewer.render;
 import com.example.netcdfviewer.model.MeshData;
 import com.example.netcdfviewer.ui.ViewportState;
 
+import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -38,6 +39,45 @@ public final class FlowVectorQuery {
         Double vFillValue,
         int layerIndex
     ) {
+        return query(
+            mesh,
+            TriangleSpatialIndexCache.get(mesh),
+            uValues,
+            vValues,
+            snapshot,
+            screenX,
+            screenY,
+            elementCentered,
+            uFillValue,
+            vFillValue,
+            layerIndex
+        );
+    }
+
+    /*
+     * ========================================================================
+     * 步骤2：使用已知空间索引查询流场向量
+     * ========================================================================
+     * 目标：
+     *   1) 在高频采样时复用同一个空间索引对象
+     *   2) 避免热点循环里重复访问缓存层
+     * 操作要点：
+     *   1) 调用方可显式传入索引
+     *   2) 查询逻辑与默认入口保持一致
+     */
+    static Result query(
+        MeshData mesh,
+        TriangleSpatialIndex spatialIndex,
+        double[] uValues,
+        double[] vValues,
+        ViewportState.Snapshot snapshot,
+        double screenX,
+        double screenY,
+        boolean elementCentered,
+        Double uFillValue,
+        Double vFillValue,
+        int layerIndex
+    ) {
         if (logger.isLoggable(Level.FINE)) {
             logger.fine("开始查询流场向量, screenX="
                 + screenX
@@ -51,8 +91,10 @@ public final class FlowVectorQuery {
         double worldX = snapshot.worldX(screenX);
         double worldY = snapshot.worldY(screenY);
 
-        // 1.2 顺序扫描三角网，找到命中的三角形并返回对应向量。
-        for (int triangleIndex = 0; triangleIndex < mesh.triangles().length; triangleIndex++) {
+        // 1.2 先通过空间索引锁定候选三角形，再做精确命中判断。
+        List<Integer> candidateTriangles = (spatialIndex == null ? TriangleSpatialIndexCache.get(mesh) : spatialIndex)
+            .findCandidateTriangles(worldX, worldY);
+        for (int triangleIndex : candidateTriangles) {
             int[] triangle = mesh.triangles()[triangleIndex];
             Barycentric barycentric = barycentric(mesh, triangle, worldX, worldY);
             if (!barycentric.inside()) {
