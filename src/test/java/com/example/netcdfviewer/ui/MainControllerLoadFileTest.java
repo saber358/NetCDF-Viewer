@@ -761,6 +761,35 @@ class MainControllerLoadFileTest {
     }
 
     @Test
+    void loadingStructuredWaveDatasetEnablesWaveArrowToggle() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("XTPY-roms.nc"));
+
+                assertFalse(view.getWaveArrowCheck().isDisable());
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
     void loadingVelocityDatasetEnablesFlowLineToggle() throws Exception {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<Throwable> errorRef = new AtomicReference<>();
@@ -785,6 +814,180 @@ class MainControllerLoadFileTest {
         });
 
         assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void loadingTriangleWindDatasetEnablesWindBarbToggle() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("HBHQY.nc"));
+
+                assertFalse(view.getWindBarbCheck().isDisable());
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void loadingStructuredWindDatasetEnablesWindBarbToggle() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("XTPY-wrf.nc"));
+
+                assertFalse(view.getWindBarbCheck().isDisable());
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void enablingWindBarbOverlayBuildsTriangleWindOverlayFrame() throws Exception {
+        CountDownLatch initLatch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+        AtomicReference<MainController> controllerRef = new AtomicReference<>();
+        AtomicReference<MainView> viewRef = new AtomicReference<>();
+        AtomicReference<Stage> stageRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                Stage stage = new Stage();
+                MainView view = new MainView();
+                MainController controller = new MainController(stage, view);
+                controller.initialize();
+                stage.setScene(new Scene(view, 1440, 900));
+                stage.show();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("HBHQY.nc"));
+
+                controllerRef.set(controller);
+                viewRef.set(view);
+                stageRef.set(stage);
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                initLatch.countDown();
+            }
+        });
+
+        assertTrue(initLatch.await(10, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+
+        waitForRender(viewRef.get());
+
+        CountDownLatch toggleLatch = new CountDownLatch(1);
+        Platform.runLater(() -> {
+            try {
+                viewRef.get().getWindBarbCheck().setSelected(true);
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                toggleLatch.countDown();
+            }
+        });
+        assertTrue(toggleLatch.await(5, TimeUnit.SECONDS));
+
+        waitForControllerFieldNotNull(controllerRef.get(), "latestWindOverlayFrame");
+        closeStage(stageRef.get());
+
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void enablingWindBarbOverlayBuildsStructuredWindOverlayFrame() throws Exception {
+        CountDownLatch initLatch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+        AtomicReference<MainController> controllerRef = new AtomicReference<>();
+        AtomicReference<MainView> viewRef = new AtomicReference<>();
+        AtomicReference<Stage> stageRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                Stage stage = new Stage();
+                MainView view = new MainView();
+                MainController controller = new MainController(stage, view);
+                controller.initialize();
+                stage.setScene(new Scene(view, 1440, 900));
+                stage.show();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("XTPY-wrf.nc"));
+
+                controllerRef.set(controller);
+                viewRef.set(view);
+                stageRef.set(stage);
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                initLatch.countDown();
+            }
+        });
+
+        assertTrue(initLatch.await(10, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+
+        waitForRender(viewRef.get());
+
+        CountDownLatch toggleLatch = new CountDownLatch(1);
+        Platform.runLater(() -> {
+            try {
+                viewRef.get().getWindBarbCheck().setSelected(true);
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                toggleLatch.countDown();
+            }
+        });
+        assertTrue(toggleLatch.await(5, TimeUnit.SECONDS));
+
+        waitForControllerFieldNotNull(controllerRef.get(), "latestWindOverlayFrame");
+        closeStage(stageRef.get());
+
         if (errorRef.get() != null) {
             throw new AssertionError(errorRef.get());
         }
@@ -978,6 +1181,34 @@ class MainControllerLoadFileTest {
             Thread.sleep(100);
         }
         throw new AssertionError("Timed out waiting for status update. Last status: " + statusRef.get());
+    }
+
+    private static void waitForControllerFieldNotNull(MainController controller, String fieldName) throws Exception {
+        AtomicReference<Object> valueRef = new AtomicReference<>();
+        long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (System.nanoTime() < deadlineNanos) {
+            CountDownLatch pollLatch = new CountDownLatch(1);
+            Platform.runLater(() -> {
+                try {
+                    Field field = MainController.class.getDeclaredField(fieldName);
+                    field.setAccessible(true);
+                    valueRef.set(field.get(controller));
+                } catch (Throwable throwable) {
+                    valueRef.set(throwable);
+                } finally {
+                    pollLatch.countDown();
+                }
+            });
+            assertTrue(pollLatch.await(2, TimeUnit.SECONDS), "FX thread did not respond while waiting for controller field.");
+            if (valueRef.get() instanceof Throwable throwable) {
+                throw new AssertionError(throwable);
+            }
+            if (valueRef.get() != null) {
+                return;
+            }
+            Thread.sleep(100);
+        }
+        throw new AssertionError("Timed out waiting for controller field: " + fieldName);
     }
 
     private static void readStatus(MainView view, AtomicReference<String> statusRef) throws Exception {

@@ -121,4 +121,68 @@ class WaveArrowOverlayRendererTest {
         assertTrue(arrows.stream().allMatch(arrow -> arrow.length() >= WaveArrowOverlayRenderer.MIN_ARROW_LENGTH));
         assertTrue(arrows.stream().allMatch(arrow -> arrow.length() <= WaveArrowOverlayRenderer.MAX_ARROW_LENGTH));
     }
+
+    @Test
+    void sampleStructuredVectorArrowsBuildsGlyphsWhenUWaveAndVWaveExist() {
+        StructuredGridDomain uDomain = new StructuredGridDomain(
+            new StructuredGridData(
+                new CoordinateBinding("binding:lon_u:lat_u", "lon_u", "lat_u", List.of("x_u", "y_u"), false),
+                new double[]{0.5, 1.5},
+                new double[]{0.0, 1.0, 2.0},
+                null,
+                null,
+                2,
+                3
+            ),
+            new CoordinateBinding("binding:lon_u:lat_u", "lon_u", "lat_u", List.of("x_u", "y_u"), false)
+        );
+        StructuredGridDomain vDomain = new StructuredGridDomain(
+            new StructuredGridData(
+                new CoordinateBinding("binding:lon_v:lat_v", "lon_v", "lat_v", List.of("x_v", "y_v"), false),
+                new double[]{0.0, 1.0, 2.0},
+                new double[]{0.5, 1.5},
+                null,
+                null,
+                3,
+                2
+            ),
+            new CoordinateBinding("binding:lon_v:lat_v", "lon_v", "lat_v", List.of("x_v", "y_v"), false)
+        );
+        StructuredGridDomain hDomain = new StructuredGridDomain(
+            new StructuredGridData(
+                new CoordinateBinding("binding:lon_rho:lat_rho", "lon_rho", "lat_rho", List.of("x_rho", "y_rho"), false),
+                new double[]{0.0, 1.0, 2.0},
+                new double[]{0.0, 1.0, 2.0},
+                null,
+                null,
+                3,
+                3
+            ),
+            new CoordinateBinding("binding:lon_rho:lat_rho", "lon_rho", "lat_rho", List.of("x_rho", "y_rho"), false)
+        );
+
+        List<WaveArrowOverlayRenderer.ArrowGlyph> arrows = renderer.sampleStructuredVectorArrows(
+            uDomain,
+            vDomain,
+            hDomain,
+            new double[]{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+            new double[]{0.5, 0.5, 0.5, 0.5, 0.5, 0.5},
+            new double[]{2.0, 3.0, 4.0, 2.5, 3.5, 4.5, 3.0, 4.0, 5.0},
+            new ViewportState.Snapshot(24.0, 0.0, 48.0),
+            64,
+            64,
+            false,
+            false,
+            false,
+            null,
+            null,
+            null,
+            0,
+            RenderMath.computeRange(new double[]{2.0, 3.0, 4.0, 5.0}, null)
+        );
+
+        assertFalse(arrows.isEmpty());
+        assertTrue(arrows.stream().allMatch(arrow -> arrow.length() >= WaveArrowOverlayRenderer.MIN_ARROW_LENGTH));
+        assertTrue(arrows.stream().allMatch(arrow -> arrow.length() <= WaveArrowOverlayRenderer.MAX_ARROW_LENGTH));
+    }
 }

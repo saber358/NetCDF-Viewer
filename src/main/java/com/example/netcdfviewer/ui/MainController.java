@@ -8,9 +8,11 @@ import com.example.netcdfviewer.model.SpatialDomain;
 import com.example.netcdfviewer.model.StructuredGridDomain;
 import com.example.netcdfviewer.io.VelocityVariablePairFinder;
 import com.example.netcdfviewer.io.WaveVariablePairFinder;
+import com.example.netcdfviewer.io.WindVariablePairFinder;
 import com.example.netcdfviewer.model.VariableInfo;
 import com.example.netcdfviewer.model.VelocityVariablePair;
 import com.example.netcdfviewer.model.WaveVariablePair;
+import com.example.netcdfviewer.model.WindVariablePair;
 import com.example.netcdfviewer.overlay.BuiltInCoastline;
 import com.example.netcdfviewer.overlay.CoastlineOverlay;
 import com.example.netcdfviewer.overlay.CoastlineOverlayLoader;
@@ -26,6 +28,7 @@ import com.example.netcdfviewer.render.StructuredGridImageRenderer;
 import com.example.netcdfviewer.render.StructuredPointQuery;
 import com.example.netcdfviewer.render.TriangleImageRenderer;
 import com.example.netcdfviewer.render.WaveArrowOverlayRenderer;
+import com.example.netcdfviewer.render.WindBarbOverlayRenderer;
 import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
@@ -55,6 +58,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 /**
@@ -62,6 +66,8 @@ import java.util.stream.Collectors;
  * 负责把界面、解析器、渲染器和导出逻辑串联起来。
  */
 public final class MainController {
+    // 控制器日志对象。
+    private static final Logger logger = Logger.getLogger(MainController.class.getName());
     // 当前窗口对象。
     private final Stage stage;
     // 主界面视图对象。
@@ -72,6 +78,8 @@ public final class MainController {
     private final WaveVariablePairFinder waveVariablePairFinder = new WaveVariablePairFinder();
     // 流场速度变量配对识别器。
     private final VelocityVariablePairFinder velocityVariablePairFinder = new VelocityVariablePairFinder();
+    // 风场变量配对识别器。
+    private final WindVariablePairFinder windVariablePairFinder = new WindVariablePairFinder();
     // 后台离屏渲染器。
     private final TriangleImageRenderer imageRenderer = new TriangleImageRenderer();
     // 标准格网离屏渲染器。
@@ -82,6 +90,8 @@ public final class MainController {
     private final WaveArrowOverlayRenderer waveArrowOverlayRenderer = new WaveArrowOverlayRenderer();
     // 流线叠加绘制器。
     private final FlowLineOverlayRenderer flowLineOverlayRenderer = new FlowLineOverlayRenderer();
+    // 风羽叠加绘制器。
+    private final WindBarbOverlayRenderer windBarbOverlayRenderer = new WindBarbOverlayRenderer();
     // 海岸线叠加绘制器。
     private final CoastlineOverlayRenderer coastlineOverlayRenderer = new CoastlineOverlayRenderer();
     // 当前视口状态，包含缩放和平移信息。
@@ -116,12 +126,16 @@ public final class MainController {
     private WaveVariablePair activeWavePair;
     // 当前数据集识别出的流场速度变量配对。
     private VelocityVariablePair activeVelocityPair;
+    // 当前数据集识别出的风场变量配对。
+    private WindVariablePair activeWindPair;
     // 最近一次成功渲染的底图。
     private WritableImage latestBaseImage;
     // 最近一次成功渲染的波场箭头叠加数据。
     private WaveOverlayFrame latestWaveOverlayFrame;
     // 最近一次成功渲染的流线叠加数据。
     private FlowOverlayFrame latestFlowOverlayFrame;
+    // 最近一次成功渲染的风羽叠加数据。
+    private WindOverlayFrame latestWindOverlayFrame;
     // 流线亮带动画时间线。
     private Timeline flowAnimationTimeline;
     // 当前流线亮带动画相位。
@@ -169,6 +183,8 @@ public final class MainController {
         view.getFlowLineCheck().setSelected(false);
         view.getWaveArrowCheck().setDisable(true);
         view.getWaveArrowCheck().setSelected(false);
+        view.getWindBarbCheck().setDisable(true);
+        view.getWindBarbCheck().setSelected(false);
         view.getRemoveDatasetButton().setDisable(true);
         // 设置初始状态提示。
         setStatus("Ready to open NetCDF file.");
@@ -261,6 +277,14 @@ public final class MainController {
         });
         // 波场箭头开关变化时重绘当前视图。
         view.getWaveArrowCheck().selectedProperty().addListener((obs, oldValue, newValue) -> renderCurrentSelection());
+        // 风羽开关开启时重新准备叠加数据，关闭时直接复用缓存底图重绘。
+        view.getWindBarbCheck().selectedProperty().addListener((obs, oldValue, newValue) -> {
+            if (newValue) {
+                renderCurrentSelection();
+                return;
+            }
+            redrawCurrentView();
+        });
         // 流线开关开启时重新准备叠加数据，关闭时直接用缓存底图重绘。
         view.getFlowLineCheck().selectedProperty().addListener((obs, oldValue, newValue) -> {
             if (newValue) {
@@ -458,6 +482,8 @@ public final class MainController {
     }
 
     private void activateDataset(LoadedDatasetItem item) {
+        logger.info(() -> "开始激活数据集, sourcePath=" + item.sourcePath());
+
         // 切换活动数据集时先重置与当前渲染相关的瞬时状态。
         currentDataset = item.dataset();
         activeSpatialDomain = item.dataset().spatialDomain();
@@ -465,10 +491,12 @@ public final class MainController {
         currentVariable = null;
         activeWavePair = waveVariablePairFinder.find(item.dataset()).orElse(null);
         activeVelocityPair = velocityVariablePairFinder.find(item.dataset()).orElse(null);
+        activeWindPair = windVariablePairFinder.find(item.dataset()).orElse(null);
         latestRenderQueryContext = null;
         latestBaseImage = null;
         latestWaveOverlayFrame = null;
         latestFlowOverlayFrame = null;
+        latestWindOverlayFrame = null;
         flowAnimationPhase = 0.0;
         stopFlowAnimation();
         viewportState.reset();
@@ -482,6 +510,7 @@ public final class MainController {
         view.getLayerInfoLabel().setText("Layer: -");
         updateFlowLineControls();
         updateWaveArrowControls();
+        updateWindBarbControls();
         // 优先选中第一个可绘制变量，提升切换体验。
         VariableInfo preferredVariable = item.dataset().plottableVariables().stream().findFirst().orElse(null);
         if (preferredVariable != null) {
@@ -494,6 +523,15 @@ public final class MainController {
             renderPlaceholder("The file contains no variables.");
         }
         updateWindowTitle();
+
+        logger.info(() -> "数据集激活完成, sourcePath="
+            + item.sourcePath()
+            + ", waveAvailable="
+            + (activeWavePair != null)
+            + ", flowAvailable="
+            + (activeVelocityPair != null)
+            + ", windAvailable="
+            + (activeWindPair != null));
     }
 
     private void loadCoastline(Path path) {
@@ -557,16 +595,20 @@ public final class MainController {
     }
 
     private void clearActiveDatasetState() {
+        logger.info("开始清空活动数据集状态");
+
         currentDataset = null;
         activeSpatialDomain = null;
         activeCoordinateBinding = null;
         currentVariable = null;
         activeWavePair = null;
         activeVelocityPair = null;
+        activeWindPair = null;
         latestRenderQueryContext = null;
         latestBaseImage = null;
         latestWaveOverlayFrame = null;
         latestFlowOverlayFrame = null;
+        latestWindOverlayFrame = null;
         flowAnimationPhase = 0.0;
         stopFlowAnimation();
         view.getVariableList().getItems().clear();
@@ -596,8 +638,12 @@ public final class MainController {
         view.getFlowLineCheck().setDisable(true);
         view.getWaveArrowCheck().setSelected(false);
         view.getWaveArrowCheck().setDisable(true);
+        view.getWindBarbCheck().setSelected(false);
+        view.getWindBarbCheck().setDisable(true);
         renderPlaceholder("Open a NetCDF file to begin.");
         updateWindowTitle();
+
+        logger.info("活动数据集状态清空完成");
     }
 
     private LoadedDatasetItem findLoadedDataset(Path path) {
@@ -1086,6 +1132,33 @@ public final class MainController {
         view.getFlowLineCheck().setDisable(!available);
     }
 
+    /*
+     * ========================================================================
+     * 步骤3：刷新风羽控件状态
+     * ========================================================================
+     * 目标：
+     *   1) 让界面只在数据集存在兼容风场变量配对时开放风羽开关
+     * 操作要点：
+     *   1) 无配对时强制取消勾选
+     *   2) 有配对时仅解除禁用，不改用户勾选状态
+     */
+    private void updateWindBarbControls() {
+        logger.info(() -> "开始刷新风羽控件状态, windAvailable=" + (activeWindPair != null));
+
+        // 3.1 根据当前数据集是否识别出风场变量配对决定控件可用性。
+        boolean available = activeWindPair != null;
+
+        // 3.2 没有风场变量配对时强制取消勾选，避免旧状态串到新数据集。
+        if (!available) {
+            view.getWindBarbCheck().setSelected(false);
+        }
+
+        // 3.3 同步更新勾选框禁用状态。
+        view.getWindBarbCheck().setDisable(!available);
+
+        logger.info(() -> "风羽控件状态刷新完成, windAvailable=" + available);
+    }
+
     private void renderCurrentSelection() {
         // 获取主画布对象。
         Canvas canvas = view.getRenderCanvas();
@@ -1130,6 +1203,8 @@ public final class MainController {
             WaveVariablePair wavePair = view.getWaveArrowCheck().isSelected() ? activeWavePair : null;
             // 在当前状态下决定是否启用流线叠加层。
             VelocityVariablePair flowPair = view.getFlowLineCheck().isSelected() ? activeVelocityPair : null;
+            // 在当前状态下决定是否启用风羽叠加层。
+            WindVariablePair windPair = view.getWindBarbCheck().isSelected() ? activeWindPair : null;
             // 确保视口已适配当前网格范围。
             viewportState.ensureFitted(activeSpatialDomain, canvas.getWidth(), canvas.getHeight());
             // 生成新的渲染序号，供后台任务结果校验使用。
@@ -1138,13 +1213,14 @@ public final class MainController {
             latestRenderQueryContext = null;
             latestWaveOverlayFrame = null;
             latestFlowOverlayFrame = null;
+            latestWindOverlayFrame = null;
             stopFlowAnimation();
             // 显示渲染中提示。
             view.getOverlayLabel().setText("Rendering " + currentVariable.name() + " ...");
             view.getOverlayLabel().setVisible(true);
             setStatus("Rendering " + currentVariable.name() + " ...");
             // 在后台线程中执行真正的图像渲染。
-            renderAsync(requestId, layerIndex, values, colorMap, displayRange, wavePair, flowPair);
+            renderAsync(requestId, layerIndex, values, colorMap, displayRange, wavePair, flowPair, windPair);
         } catch (Exception exception) {
             // 渲染准备阶段异常时，直接退回占位提示。
             renderPlaceholder("Could not render the selected variable: " + exception.getMessage());
@@ -1158,7 +1234,8 @@ public final class MainController {
         ColorMap colorMap,
         RangeStats displayRange,
         WaveVariablePair wavePair,
-        VelocityVariablePair flowPair
+        VelocityVariablePair flowPair,
+        WindVariablePair windPair
     ) {
         // 快照当前画布与状态，避免后台线程期间界面对象变化。
         Canvas canvas = view.getRenderCanvas();
@@ -1201,28 +1278,43 @@ public final class MainController {
                 // 再按需准备波场箭头叠加层所需的数据。
                 WaveOverlayFrame waveOverlayFrame = null;
                 FlowOverlayFrame flowOverlayFrame = null;
+                WindOverlayFrame windOverlayFrame = null;
                 String overlayMessage = null;
                 if (wavePair != null) {
                     try {
                         int waveLayerIndex = wavePair.resolveLayerIndex(layerIndex);
                         double[] directionValues = parser.readLayer(dataset, wavePair.directionVariable(), waveLayerIndex);
                         double[] wavelengthValues = parser.readLayer(dataset, wavePair.wavelengthVariable(), waveLayerIndex);
-                        RangeStats wavelengthRange = RenderMath.computeRange(
-                            wavelengthValues,
-                            wavePair.wavelengthVariable().fillValue()
-                        );
-                        if (!wavelengthRange.empty()) {
+                        double[] waveHeightValues = wavePair.optionalWaveHeightVariable().isPresent()
+                            ? parser.readLayer(dataset, wavePair.optionalWaveHeightVariable().orElseThrow(), waveLayerIndex)
+                            : null;
+                        RangeStats wavelengthRange = wavePair.vectorMode()
+                            ? (wavePair.optionalWaveHeightVariable().isPresent()
+                                ? RenderMath.computeRange(
+                                    waveHeightValues,
+                                    wavePair.optionalWaveHeightVariable().orElseThrow().fillValue()
+                                )
+                                : null)
+                            : RenderMath.computeRange(
+                                wavelengthValues,
+                                wavePair.wavelengthVariable().fillValue()
+                            );
+                        if ((wavelengthRange != null && !wavelengthRange.empty()) || wavePair.vectorMode()) {
                             waveOverlayFrame = new WaveOverlayFrame(
                                 wavePair,
                                 waveLayerIndex,
                                 directionValues,
                                 wavelengthValues,
+                                waveHeightValues,
                                 wavelengthRange,
                                 wavePair.directionVariable().geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
                                     ? resolveStructuredDomainForVariable(dataset, wavePair.directionVariable())
                                     : null,
                                 wavePair.wavelengthVariable().geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
                                     ? resolveStructuredDomainForVariable(dataset, wavePair.wavelengthVariable())
+                                    : null,
+                                wavePair.optionalWaveHeightVariable().isPresent()
+                                    ? resolveStructuredDomainForVariable(dataset, wavePair.optionalWaveHeightVariable().orElseThrow())
                                     : null,
                                 snapshot
                             );
@@ -1280,10 +1372,71 @@ public final class MainController {
                     }
                 }
 
+                /*
+                 * ========================================================================
+                 * 步骤3：按需准备风羽叠加层
+                 * ========================================================================
+                 * 目标：
+                 *   1) 为三角网和规则格网生成可直接绘制的风羽标记集合
+                 * 操作要点：
+                 *   1) 后台线程中一次性完成采样
+                 *   2) 界面线程只复用缓存结果绘制
+                 */
+                if (windPair != null) {
+                    try {
+                        // 3.1 解析当前风场应读取的层号。
+                        int windLayerIndex = windPair.resolveLayerIndex(layerIndex);
+                        // 3.2 读取东向和北向风速分量。
+                        double[] uValues = parser.readLayer(dataset, windPair.eastwardVariable(), windLayerIndex);
+                        double[] vValues = parser.readLayer(dataset, windPair.northwardVariable(), windLayerIndex);
+                        // 3.3 按网格类型采样出风羽标记。
+                        List<WindBarbOverlayRenderer.WindBarbGlyph> glyphs = windPair.eastwardVariable().geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
+                            ? windBarbOverlayRenderer.sampleStructuredBarbs(
+                                resolveStructuredDomainForVariable(dataset, windPair.eastwardVariable()),
+                                resolveStructuredDomainForVariable(dataset, windPair.northwardVariable()),
+                                uValues,
+                                vValues,
+                                snapshot,
+                                width,
+                                height,
+                                windPair.eastwardVariable().cellCentered(),
+                                windPair.northwardVariable().cellCentered(),
+                                windPair.eastwardVariable().fillValue(),
+                                windPair.northwardVariable().fillValue(),
+                                windLayerIndex
+                            )
+                            : windBarbOverlayRenderer.sampleBarbs(
+                                dataset.mesh(),
+                                uValues,
+                                vValues,
+                                snapshot,
+                                width,
+                                height,
+                                windPair.elementCentered(),
+                                windPair.eastwardVariable().fillValue(),
+                                windPair.northwardVariable().fillValue(),
+                                windLayerIndex
+                            );
+                        // 3.4 有可绘制标记时缓存到渲染帧。
+                        if (!glyphs.isEmpty()) {
+                            windOverlayFrame = new WindOverlayFrame(
+                                windPair,
+                                windLayerIndex,
+                                glyphs
+                            );
+                        }
+                    } catch (Exception windError) {
+                        overlayMessage = overlayMessage == null
+                            ? "Wind barbs skipped: " + windError.getMessage()
+                            : overlayMessage + "; Wind barbs skipped: " + windError.getMessage();
+                    }
+                }
+
                 return new RenderFrame(
                     SwingFXUtils.toFXImage(bufferedImage, null),
                     waveOverlayFrame,
                     flowOverlayFrame,
+                    windOverlayFrame,
                     overlayMessage
                 );
             }
@@ -1299,6 +1452,7 @@ public final class MainController {
             latestBaseImage = frame.image();
             latestWaveOverlayFrame = frame.waveOverlayFrame();
             latestFlowOverlayFrame = frame.flowOverlayFrame();
+            latestWindOverlayFrame = frame.windOverlayFrame();
             // 刷新右侧色条。
             view.getColorBarCanvas().render(colorMap, displayRange);
             // 缓存当前成功渲染的查询上下文，供点击单点查询复用。
@@ -1382,7 +1536,32 @@ public final class MainController {
         }
 
         if (view.getWaveArrowCheck().isSelected() && latestWaveOverlayFrame != null) {
-            if (latestWaveOverlayFrame.directionDomain() != null && latestWaveOverlayFrame.wavelengthDomain() != null) {
+            if (latestWaveOverlayFrame.pair().vectorMode()
+                && latestWaveOverlayFrame.directionDomain() != null
+                && latestWaveOverlayFrame.wavelengthDomain() != null) {
+                waveArrowOverlayRenderer.renderStructuredVector(
+                    canvas.getGraphicsContext2D(),
+                    latestWaveOverlayFrame.directionDomain(),
+                    latestWaveOverlayFrame.wavelengthDomain(),
+                    latestWaveOverlayFrame.waveHeightDomain(),
+                    latestWaveOverlayFrame.directionValues(),
+                    latestWaveOverlayFrame.wavelengthValues(),
+                    latestWaveOverlayFrame.waveHeightValues(),
+                    latestWaveOverlayFrame.snapshot(),
+                    Math.max(1, (int) Math.round(canvas.getWidth())),
+                    Math.max(1, (int) Math.round(canvas.getHeight())),
+                    latestWaveOverlayFrame.pair().directionVariable().cellCentered(),
+                    latestWaveOverlayFrame.pair().wavelengthVariable().cellCentered(),
+                    latestWaveOverlayFrame.waveHeightDomain() != null
+                        && latestWaveOverlayFrame.pair().optionalWaveHeightVariable().isPresent()
+                        && latestWaveOverlayFrame.pair().optionalWaveHeightVariable().orElseThrow().cellCentered(),
+                    latestWaveOverlayFrame.pair().directionVariable().fillValue(),
+                    latestWaveOverlayFrame.pair().wavelengthVariable().fillValue(),
+                    latestWaveOverlayFrame.pair().optionalWaveHeightVariable().map(VariableInfo::fillValue).orElse(null),
+                    latestWaveOverlayFrame.layerIndex(),
+                    latestWaveOverlayFrame.wavelengthRange()
+                );
+            } else if (latestWaveOverlayFrame.directionDomain() != null && latestWaveOverlayFrame.wavelengthDomain() != null) {
                 waveArrowOverlayRenderer.renderStructured(
                     canvas.getGraphicsContext2D(),
                     latestWaveOverlayFrame.directionDomain(),
@@ -1415,6 +1594,13 @@ public final class MainController {
                     latestWaveOverlayFrame.wavelengthRange()
                 );
             }
+        }
+
+        if (view.getWindBarbCheck().isSelected() && latestWindOverlayFrame != null) {
+            windBarbOverlayRenderer.render(
+                canvas.getGraphicsContext2D(),
+                latestWindOverlayFrame.glyphs()
+            );
         }
 
         coastlineOverlayRenderer.render(
@@ -1525,6 +1711,7 @@ public final class MainController {
         latestBaseImage = null;
         latestWaveOverlayFrame = null;
         latestFlowOverlayFrame = null;
+        latestWindOverlayFrame = null;
         stopFlowAnimation();
         // 占位状态下不允许导出。
         view.getExportButton().setDisable(true);
@@ -1757,6 +1944,7 @@ public final class MainController {
         WritableImage image,
         WaveOverlayFrame waveOverlayFrame,
         FlowOverlayFrame flowOverlayFrame,
+        WindOverlayFrame windOverlayFrame,
         String overlayMessage
     ) {
     }
@@ -1766,9 +1954,11 @@ public final class MainController {
         int layerIndex,
         double[] directionValues,
         double[] wavelengthValues,
+        double[] waveHeightValues,
         RangeStats wavelengthRange,
         StructuredGridDomain directionDomain,
         StructuredGridDomain wavelengthDomain,
+        StructuredGridDomain waveHeightDomain,
         ViewportState.Snapshot snapshot
     ) {
     }
@@ -1778,6 +1968,13 @@ public final class MainController {
         int layerIndex,
         List<FlowLineGenerator.FlowLine> lines,
         ViewportState.Snapshot snapshot
+    ) {
+    }
+
+    private record WindOverlayFrame(
+        WindVariablePair pair,
+        int layerIndex,
+        List<WindBarbOverlayRenderer.WindBarbGlyph> glyphs
     ) {
     }
 

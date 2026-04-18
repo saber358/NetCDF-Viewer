@@ -108,6 +108,8 @@ public final class MainView extends BorderPane {
     private final CheckBox flowLineCheck = new CheckBox("Flow lines");
     // 波场箭头叠加开关。
     private final CheckBox waveArrowCheck = new CheckBox("Wave arrows");
+    // 风羽叠加开关。
+    private final CheckBox windBarbCheck = new CheckBox("Wind barbs");
     // 手动最小值输入框。
     private final TextField minField = new TextField();
     // 手动最大值输入框。
@@ -222,6 +224,7 @@ public final class MainView extends BorderPane {
         autoRangeCheck.setSelected(true);
         flowLineCheck.setDisable(true);
         waveArrowCheck.setDisable(true);
+        windBarbCheck.setDisable(true);
         minField.setPromptText("Min");
         maxField.setPromptText("Max");
         // 手动范围区由最小值、最大值和应用按钮组成。
@@ -237,6 +240,7 @@ public final class MainView extends BorderPane {
             visualizeButton,
             flowLineCheck,
             waveArrowCheck,
+            windBarbCheck,
             colorMapLabel,
             colorMapCombo,
             depthLabel,
@@ -433,6 +437,10 @@ public final class MainView extends BorderPane {
 
     public CheckBox getWaveArrowCheck() {
         return waveArrowCheck;
+    }
+
+    public CheckBox getWindBarbCheck() {
+        return windBarbCheck;
     }
 
     public TextField getMinField() {
