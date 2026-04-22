@@ -1,6 +1,13 @@
 package com.example.netcdfviewer.ui;
 
 import com.example.netcdfviewer.AppMetadata;
+import com.example.netcdfviewer.basemap.BaseMapDefinition;
+import com.example.netcdfviewer.basemap.BaseMapPreset;
+import com.example.netcdfviewer.basemap.BaseMapRenderResult;
+import com.example.netcdfviewer.basemap.BaseMapSelection;
+import com.example.netcdfviewer.basemap.TileCache;
+import com.example.netcdfviewer.basemap.TileClient;
+import com.example.netcdfviewer.basemap.TileRenderer;
 import com.example.netcdfviewer.io.NetcdfDatasetParser;
 import com.example.netcdfviewer.io.ParsedDataset;
 import com.example.netcdfviewer.model.CoordinateBinding;
@@ -93,6 +100,8 @@ public final class MainController {
     private final TriangleImageRenderer imageRenderer = new TriangleImageRenderer();
     // 标准格网离屏渲染器。
     private final StructuredGridImageRenderer structuredImageRenderer = new StructuredGridImageRenderer();
+    // 在线底图瓦片渲染器。
+    private final TileRenderer tileRenderer;
     // 流线采样器。
     private final FlowLineGenerator flowLineGenerator = new FlowLineGenerator();
     // 波场箭头叠加绘制器。
@@ -147,6 +156,12 @@ public final class MainController {
     private VelocityVariablePair activeVelocityPair;
     // 当前数据集识别出的风场变量配对。
     private WindVariablePair activeWindPair;
+    // 当前底图选择。
+    private BaseMapSelection currentBaseMapSelection = BaseMapSelection.none();
+    // 当前自定义底图配置。
+    private BaseMapDefinition customBaseMapDefinition;
+    // 最近一次成功渲染的在线底图。
+    private WritableImage latestBaseMapImage;
     // 最近一次成功渲染的底图。
     private WritableImage latestBaseImage;
     // Last complete rendered frame used for navigation preview.
@@ -189,9 +204,14 @@ public final class MainController {
     private static final double CLICK_TOLERANCE = 4.0;
 
     public MainController(Stage stage, MainView view) {
+        this(stage, view, createDefaultTileRenderer());
+    }
+
+    public MainController(Stage stage, MainView view, TileRenderer tileRenderer) {
         // 保存窗口和视图引用，供后续初始化和事件处理使用。
         this.stage = stage;
         this.view = view;
+        this.tileRenderer = tileRenderer;
     }
 
     public void initialize() {
@@ -207,6 +227,7 @@ public final class MainController {
         view.getDatasetList().setItems(loadedDatasets);
         view.getClearCoastlineMenuItem().setDisable(true);
         view.getUseBuiltInCoastlineMenuItem().setDisable(false);
+        view.getClearCustomBaseMapMenuItem().setDisable(true);
         // 设置常用快捷键。
         view.getOpenMenuItem().setAccelerator(KeyCombination.keyCombination("Shortcut+O"));
         view.getExportPngMenuItem().setAccelerator(KeyCombination.keyCombination("Shortcut+Shift+E"));
@@ -268,6 +289,14 @@ public final class MainController {
         view.getLoadCoastlineMenuItem().setOnAction(event -> openCoastlineWithFileChooser());
         view.getUseBuiltInCoastlineMenuItem().setOnAction(event -> useBuiltInCoastline());
         view.getClearCoastlineMenuItem().setOnAction(event -> clearCoastlineOverlay());
+        // 底图切换菜单。
+        view.getNoBaseMapMenuItem().setOnAction(event -> selectNoBaseMap());
+        view.getOsmBaseMapMenuItem().setOnAction(event -> selectPresetBaseMap(BaseMapPreset.OSM));
+        view.getTiandituVectorBaseMapMenuItem().setOnAction(event -> selectPresetBaseMap(BaseMapPreset.TIANDITU_VECTOR));
+        view.getTiandituImageBaseMapMenuItem().setOnAction(event -> selectPresetBaseMap(BaseMapPreset.TIANDITU_IMAGE));
+        view.getTiandituTerrainBaseMapMenuItem().setOnAction(event -> selectPresetBaseMap(BaseMapPreset.TIANDITU_TERRAIN));
+        view.getCustomBaseMapMenuItem().setOnAction(event -> configureCustomBaseMap());
+        view.getClearCustomBaseMapMenuItem().setOnAction(event -> clearCustomBaseMap());
         // 导出 PNG 菜单与按钮共用同一处理逻辑。
         view.getExportPngMenuItem().setOnAction(event -> exportPng());
         view.getExportButton().setOnAction(event -> exportPng());
@@ -469,6 +498,115 @@ public final class MainController {
         }
     }
 
+    /*
+     * ========================================================================
+     * 步骤1：关闭底图
+     * ========================================================================
+     * 目标：
+     *   1) 清空当前底图选择和底图缓存
+     *   2) 触发当前视图重绘
+     */
+    private void selectNoBaseMap() {
+        logger.info("开始关闭底图...");
+
+        // 1.1 重置当前底图选择和缓存图像。
+        currentBaseMapSelection = BaseMapSelection.none();
+        latestBaseMapImage = null;
+
+        // 1.2 更新状态栏并重绘当前视图。
+        setStatus("已关闭底图。");
+        refreshAfterBaseMapSelectionChanged();
+
+        logger.info("底图关闭完成");
+    }
+
+    /*
+     * ========================================================================
+     * 步骤2：选择内置底图
+     * ========================================================================
+     * 目标：
+     *   1) 应用预置底图定义
+     *   2) 清空旧底图缓存并重绘
+     */
+    private void selectPresetBaseMap(BaseMapPreset preset) {
+        logger.info(() -> "开始选择内置底图, preset=" + preset.name());
+
+        // 2.1 按预置名称生成当前底图定义。
+        currentBaseMapSelection = new BaseMapSelection(preset.create(""));
+        latestBaseMapImage = null;
+
+        // 2.2 更新状态栏并触发重绘。
+        setStatus("已选择底图：" + preset.displayName());
+        refreshAfterBaseMapSelectionChanged();
+
+        logger.info(() -> "内置底图选择完成, preset=" + preset.name());
+    }
+
+    /*
+     * ========================================================================
+     * 步骤3：配置自定义底图
+     * ========================================================================
+     * 目标：
+     *   1) 通过对话框收集自定义底图参数
+     *   2) 成功后切换到自定义底图并重绘
+     */
+    private void configureCustomBaseMap() {
+        logger.info("开始配置自定义底图...");
+
+        // 3.1 打开对话框收集自定义 XYZ 参数。
+        BaseMapConfigDialog.create(stage).showAndWait().ifPresent(definition -> {
+            // 3.2 用户确认后写入当前自定义底图配置。
+            customBaseMapDefinition = definition;
+            currentBaseMapSelection = new BaseMapSelection(definition);
+            view.getClearCustomBaseMapMenuItem().setDisable(false);
+            latestBaseMapImage = null;
+
+            // 3.3 更新状态栏并触发重绘。
+            setStatus("已选择底图：" + definition.displayName());
+            refreshAfterBaseMapSelectionChanged();
+        });
+
+        logger.info("自定义底图配置完成");
+    }
+
+    /*
+     * ========================================================================
+     * 步骤4：清除自定义底图参数
+     * ========================================================================
+     * 目标：
+     *   1) 删除已保存的自定义底图配置
+     *   2) 必要时退出当前自定义底图
+     */
+    private void clearCustomBaseMap() {
+        logger.info("开始清除自定义底图参数...");
+
+        // 4.1 清空已保存的自定义底图定义。
+        customBaseMapDefinition = null;
+
+        // 4.2 当前若正在使用自定义底图，则回退为无底图状态。
+        if (currentBaseMapSelection.enabled()
+            && currentBaseMapSelection.definition() != null
+            && "custom".equals(currentBaseMapSelection.definition().id())) {
+            currentBaseMapSelection = BaseMapSelection.none();
+        }
+        latestBaseMapImage = null;
+        view.getClearCustomBaseMapMenuItem().setDisable(true);
+
+        // 4.3 更新状态栏并触发重绘。
+        setStatus("已清除自定义底图参数。");
+        refreshAfterBaseMapSelectionChanged();
+
+        logger.info("自定义底图参数清除完成");
+    }
+
+    private void refreshAfterBaseMapSelectionChanged() {
+        if (currentDataset != null && currentVariable != null && currentVariable.plottable()) {
+            renderCurrentSelection();
+            return;
+        }
+        redrawCurrentView();
+    }
+
     private void loadFile(Path path) {
         // 空路径直接忽略。
         if (path == null) {
@@ -560,6 +698,7 @@ public final class MainController {
         activeVelocityPair = velocityVariablePairFinder.find(item.dataset()).orElse(null);
         activeWindPair = windVariablePairFinder.find(item.dataset()).orElse(null);
         latestRenderQueryContext = null;
+        latestBaseMapImage = null;
         latestBaseImage = null;
         latestWaveOverlayFrame = null;
         latestFlowOverlayFrame = null;
@@ -673,6 +812,7 @@ public final class MainController {
         activeWindPair = null;
         latestRenderQueryContext = null;
         navigationPreviewQueryContext = null;
+        latestBaseMapImage = null;
         latestBaseImage = null;
         latestCompositeImage = null;
         latestCompositeSnapshot = null;
@@ -1288,6 +1428,7 @@ public final class MainController {
             // 新一轮渲染开始时先清空旧的查询上下文，避免点击命中过期结果。
             latestRenderQueryContext = null;
             long inputSequence = ++renderInputSequence;
+            WritableImage preservedBaseMapImage = latestBaseMapImage;
             WritableImage preservedBaseImage = latestBaseImage;
             WritableImage preservedCompositeImage = latestCompositeImage;
             ViewportState.Snapshot preservedCompositeSnapshot = latestCompositeSnapshot;
@@ -1308,6 +1449,7 @@ public final class MainController {
             setStatus("正在渲染 " + currentVariable.name() + " ...");
             if (keepCurrentFrameVisible) {
                 latestRenderQueryContext = navigationPreviewQueryContext;
+                latestBaseMapImage = preservedBaseMapImage;
                 latestBaseImage = preservedBaseImage;
                 latestCompositeImage = preservedCompositeImage;
                 latestCompositeSnapshot = preservedCompositeSnapshot;
@@ -1316,6 +1458,7 @@ public final class MainController {
                 latestWindOverlayFrame = preservedWindOverlayFrame;
                 view.getOverlayLabel().setVisible(false);
             } else {
+                latestBaseMapImage = null;
                 latestBaseImage = null;
                 latestCompositeImage = null;
                 latestCompositeSnapshot = null;
@@ -1345,6 +1488,7 @@ public final class MainController {
         ParsedDataset dataset = currentDataset;
         VariableInfo variable = currentVariable;
         SpatialDomain spatialDomain = activeSpatialDomain;
+        BaseMapSelection baseMapSelection = currentBaseMapSelection;
         int width = Math.max(1, (int) Math.round(canvas.getWidth()));
         int height = Math.max(1, (int) Math.round(canvas.getHeight()));
         ViewportState.Snapshot snapshot = viewportState.snapshot();
@@ -1366,6 +1510,10 @@ public final class MainController {
             @Override
             protected RenderFrame call() throws Exception {
                 // 1.1 底图和各类叠加层并行构建，最后统一汇总结果。
+                CompletableFuture<BaseMapRenderResult> baseMapFuture = CompletableFuture.supplyAsync(
+                    () -> tileRenderer.render(baseMapSelection, spatialDomain, snapshot, width, height),
+                    renderComputeExecutor
+                );
                 CompletableFuture<BufferedImage> baseImageFuture = CompletableFuture.supplyAsync(
                     () -> buildBaseImage(
                         spatialDomain,
@@ -1403,16 +1551,18 @@ public final class MainController {
                     height
                 );
 
+                BaseMapRenderResult baseMapResult = baseMapFuture.join();
                 BufferedImage bufferedImage = baseImageFuture.join();
                 OverlayBuildResult<WaveOverlayFrame> waveResult = waveFuture.join();
                 OverlayBuildResult<FlowOverlayFrame> flowResult = flowFuture.join();
                 OverlayBuildResult<WindOverlayFrame> windResult = windFuture.join();
                 return new RenderFrame(
+                    baseMapResult.image() == null ? null : SwingFXUtils.toFXImage(baseMapResult.image(), null),
                     SwingFXUtils.toFXImage(bufferedImage, null),
                     waveResult.frame(),
                     flowResult.frame(),
                     windResult.frame(),
-                    mergeOverlayMessages(waveResult.message(), flowResult.message(), windResult.message())
+                    mergeOverlayMessages(baseMapResult.message(), waveResult.message(), flowResult.message(), windResult.message())
                 );
             }
         };
@@ -1432,6 +1582,7 @@ public final class MainController {
             }
             navigationPreviewActive = false;
             navigationPreviewQueryContext = null;
+            latestBaseMapImage = frame.baseMapImage();
             latestBaseImage = frame.image();
             latestWaveOverlayFrame = frame.waveOverlayFrame();
             latestFlowOverlayFrame = frame.flowOverlayFrame();
@@ -1866,9 +2017,12 @@ public final class MainController {
             return;
         }
 
-        // 3.2 先清空画布并绘制底图。
+        // 3.2 先清空画布并绘制在线底图与标量底图。
         Canvas canvas = view.getRenderCanvas();
         canvas.getGraphicsContext2D().clearRect(0, 0, canvas.getWidth(), canvas.getHeight());
+        if (latestBaseMapImage != null) {
+            canvas.getGraphicsContext2D().drawImage(latestBaseMapImage, 0, 0, canvas.getWidth(), canvas.getHeight());
+        }
         canvas.getGraphicsContext2D().drawImage(latestBaseImage, 0, 0, canvas.getWidth(), canvas.getHeight());
 
         // 3.3 再按当前勾选状态绘制流线亮带、本体、波场箭头和海岸线。
@@ -2120,6 +2274,7 @@ public final class MainController {
         // 占位状态下清空最近一次可查询渲染上下文。
         latestRenderQueryContext = null;
         navigationPreviewQueryContext = null;
+        latestBaseMapImage = null;
         latestBaseImage = null;
         latestCompositeImage = null;
         latestCompositeSnapshot = null;
@@ -2346,6 +2501,13 @@ public final class MainController {
         };
     }
 
+    private static TileRenderer createDefaultTileRenderer() {
+        Path cacheDirectory = Paths.get(System.getProperty("user.home", "."))
+            .resolve(".netcdf-viewer")
+            .resolve("tile-cache");
+        return new TileRenderer(TileClient.http(new TileCache(cacheDirectory, 512)));
+    }
+
     private Path chooseSavePngFile() {
         // 调用 Swing 对话框选择保存路径。
         return SwingFileDialogs.chooseSavePngFile(lastDirectory);
@@ -2396,6 +2558,7 @@ public final class MainController {
     }
 
     private record RenderFrame(
+        WritableImage baseMapImage,
         WritableImage image,
         WaveOverlayFrame waveOverlayFrame,
         FlowOverlayFrame flowOverlayFrame,
