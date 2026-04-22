@@ -16,7 +16,7 @@ public final class AppMetadata {
     // 从类路径读取的元数据。
     private static final Properties METADATA = loadMetadata();
     // 应用显示名称。
-    public static final String APP_NAME = metadataValue("app.name", "NetCDF Viewer");
+    public static final String APP_NAME = metadataValue("app.name", "NetCDF 可视化工具");
     // 当前应用版本号。
     public static final String VERSION = metadataValue("app.version", "0.0.0");
     // 作者名称。
@@ -24,11 +24,11 @@ public final class AppMetadata {
     // 作者联系邮箱。
     public static final String AUTHOR_EMAIL = "2762692204@qq.com";
     // 用于界面底部直接展示的作者信息文本。
-    public static final String AUTHOR_LABEL = "Author: " + AUTHOR_NAME + " | " + AUTHOR_EMAIL;
+    public static final String AUTHOR_LABEL = "作者：" + AUTHOR_NAME + " | " + AUTHOR_EMAIL;
     // 用于关于窗口和文档展示的简短描述。
     public static final String DESCRIPTION = metadataValue(
         "app.description",
-        "Desktop viewer for unstructured triangle NetCDF datasets"
+        "面向三角网和规则格网 NetCDF 数据的桌面可视化工具"
     );
 
     private AppMetadata() {

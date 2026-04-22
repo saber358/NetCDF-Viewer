@@ -35,33 +35,33 @@ import javafx.scene.layout.VBox;
  */
 public final class MainView extends BorderPane {
     // 帮助菜单。
-    private final Menu helpMenu = new Menu("Help");
+    private final Menu helpMenu = new Menu("帮助");
     // 打开文件菜单项。
-    private final MenuItem openMenuItem = new MenuItem("Open...");
+    private final MenuItem openMenuItem = new MenuItem("打开...");
     // 加载海岸线菜单项。
-    private final MenuItem loadCoastlineMenuItem = new MenuItem("Load Coastline...");
+    private final MenuItem loadCoastlineMenuItem = new MenuItem("加载海岸线...");
     // 使用内置海岸线菜单项。
-    private final MenuItem useBuiltInCoastlineMenuItem = new MenuItem("Use Built-in Coastline");
+    private final MenuItem useBuiltInCoastlineMenuItem = new MenuItem("使用内置海岸线");
     // 清空海岸线菜单项。
-    private final MenuItem clearCoastlineMenuItem = new MenuItem("Clear Coastline");
+    private final MenuItem clearCoastlineMenuItem = new MenuItem("清除海岸线");
     // 导出 PNG 菜单项。
-    private final MenuItem exportPngMenuItem = new MenuItem("Export PNG...");
+    private final MenuItem exportPngMenuItem = new MenuItem("导出 PNG...");
     // 退出菜单项。
-    private final MenuItem exitMenuItem = new MenuItem("Exit");
+    private final MenuItem exitMenuItem = new MenuItem("退出");
     // 关于菜单项。
-    private final MenuItem aboutMenuItem = new MenuItem("About");
+    private final MenuItem aboutMenuItem = new MenuItem("关于");
     // 打开文件按钮。
-    private final Button openButton = new Button("Open");
+    private final Button openButton = new Button("打开");
     // 导出按钮。
-    private final Button exportButton = new Button("Export PNG");
+    private final Button exportButton = new Button("导出 PNG");
     // 重置视图按钮。
-    private final Button resetViewButton = new Button("Reset View");
+    private final Button resetViewButton = new Button("重置视图");
     // 手动触发渲染按钮。
-    private final Button visualizeButton = new Button("Visualize");
+    private final Button visualizeButton = new Button("渲染");
     // 手动应用范围按钮。
-    private final Button applyRangeButton = new Button("Apply Range");
+    private final Button applyRangeButton = new Button("应用范围");
     // 删除当前选中数据集按钮。
-    private final Button removeDatasetButton = new Button("Remove");
+    private final Button removeDatasetButton = new Button("删除");
     // 已加载数据集列表。
     private final ListView<LoadedDatasetItem> datasetList = new ListView<>();
     // 变量列表。
@@ -73,25 +73,25 @@ public final class MainView extends BorderPane {
     // 警告信息区域。
     private final TextArea warningsArea = new TextArea();
     // 主图区域中央的覆盖提示文字。
-    private final Label overlayLabel = new Label("Open a NetCDF file to begin.");
+    private final Label overlayLabel = new Label("打开 NetCDF 文件开始。");
     // 当前文件名标签。
-    private final Label datasetLabel = new Label("No file loaded");
+    private final Label datasetLabel = new Label("未加载文件");
     // 当前变量标签。
-    private final Label currentVariableLabel = new Label("Variable: -");
+    private final Label currentVariableLabel = new Label("变量：-");
     // 坐标变量标签。
-    private final Label coordinateVariableLabel = new Label("Coordinates: -");
+    private final Label coordinateVariableLabel = new Label("坐标：-");
     // 标准格网坐标选择标签。
-    private final Label coordinateSelectionLabel = new Label("Structured coordinates");
+    private final Label coordinateSelectionLabel = new Label("规则格网坐标");
     // 连接变量标签。
-    private final Label connectivityVariableLabel = new Label("Connectivity: -");
+    private final Label connectivityVariableLabel = new Label("连接关系：-");
     // 变量细节标签。
-    private final Label variableMetaLabel = new Label("Variable details: -");
+    private final Label variableMetaLabel = new Label("变量详情：-");
     // 图层信息标签。
-    private final Label layerInfoLabel = new Label("Layer: -");
+    private final Label layerInfoLabel = new Label("图层：-");
     // 数值范围标签。
-    private final Label rangeInfoLabel = new Label("Range: -");
+    private final Label rangeInfoLabel = new Label("范围：-");
     // 状态栏主状态标签。
-    private final Label statusLabel = new Label("Ready");
+    private final Label statusLabel = new Label("就绪");
     // 状态栏作者信息标签。
     private final Label authorLabel = new Label(AppMetadata.AUTHOR_LABEL);
     // 深度层滑块。
@@ -103,13 +103,13 @@ public final class MainView extends BorderPane {
     // 结构化网格 Y 轴选择框。
     private final ComboBox<String> coordinateYCombo = new ComboBox<>();
     // 自动范围复选框。
-    private final CheckBox autoRangeCheck = new CheckBox("Auto range");
+    private final CheckBox autoRangeCheck = new CheckBox("自动范围");
     // 流线叠加开关。
-    private final CheckBox flowLineCheck = new CheckBox("Flow lines");
+    private final CheckBox flowLineCheck = new CheckBox("海流流线");
     // 波场箭头叠加开关。
-    private final CheckBox waveArrowCheck = new CheckBox("Wave arrows");
+    private final CheckBox waveArrowCheck = new CheckBox("波浪箭头");
     // 风羽叠加开关。
-    private final CheckBox windBarbCheck = new CheckBox("Wind barbs");
+    private final CheckBox windBarbCheck = new CheckBox("风场风羽");
     // 手动最小值输入框。
     private final TextField minField = new TextField();
     // 手动最大值输入框。
@@ -135,7 +135,7 @@ public final class MainView extends BorderPane {
         setPadding(new Insets(8));
 
         // 创建文件菜单并挂载常用文件操作。
-        Menu fileMenu = new Menu("File");
+        Menu fileMenu = new Menu("文件");
         fileMenu.getItems().addAll(openMenuItem, loadCoastlineMenuItem, useBuiltInCoastlineMenuItem, clearCoastlineMenuItem, exportPngMenuItem, exitMenuItem);
         // 将关于菜单项加入帮助菜单。
         helpMenu.getItems().add(aboutMenuItem);
@@ -153,23 +153,23 @@ public final class MainView extends BorderPane {
         configureTextArea(attributesArea);
         configureTextArea(warningsArea);
 
-        datasetList.setPlaceholder(new Label("No datasets"));
+        datasetList.setPlaceholder(new Label("暂无数据集"));
         datasetList.setPrefHeight(120);
-        variableList.setPlaceholder(new Label("No variables"));
+        variableList.setPlaceholder(new Label("暂无变量"));
         variableList.setPrefHeight(260);
 
         // 左侧标签页分别显示摘要、属性和警告信息。
         TabPane leftTabs = new TabPane(
-            createTab("Summary", summaryArea),
-            createTab("Attributes", attributesArea),
-            createTab("Warnings", warningsArea)
+            createTab("摘要", summaryArea),
+            createTab("属性", attributesArea),
+            createTab("警告", warningsArea)
         );
         VBox.setVgrow(leftTabs, Priority.ALWAYS);
 
-        Label datasetListLabel = new Label("Loaded Datasets");
+        Label datasetListLabel = new Label("已加载数据");
         HBox datasetHeader = new HBox(8, datasetListLabel, removeDatasetButton);
         datasetHeader.setAlignment(Pos.CENTER_LEFT);
-        Label variableListLabel = new Label("Variables");
+        Label variableListLabel = new Label("变量");
         // 左侧面板由变量列表和信息标签页组成。
         VBox leftPanel = new VBox(8, datasetHeader, datasetList, variableListLabel, variableList, leftTabs);
         leftPanel.setPadding(new Insets(12));
@@ -200,20 +200,20 @@ public final class MainView extends BorderPane {
         centerPanel.setPadding(new Insets(12));
         VBox.setVgrow(visualizationBox, Priority.ALWAYS);
 
-        Label colorMapLabel = new Label("Color map");
-        Label depthLabel = new Label("Layer");
+        Label colorMapLabel = new Label("色表");
+        Label depthLabel = new Label("图层");
         depthSlider.setBlockIncrement(1);
         depthSlider.setMajorTickUnit(1);
         depthSlider.setMinorTickCount(0);
         depthSlider.setShowTickMarks(true);
         depthSlider.setShowTickLabels(false);
-        coordinateXCombo.setPromptText("X axis");
-        coordinateYCombo.setPromptText("Y axis");
+        coordinateXCombo.setPromptText("横坐标");
+        coordinateYCombo.setPromptText("纵坐标");
         coordinateSelectionBox.getChildren().addAll(
             coordinateSelectionLabel,
-            new Label("X axis"),
+            new Label("横坐标"),
             coordinateXCombo,
-            new Label("Y axis"),
+            new Label("纵坐标"),
             coordinateYCombo
         );
         coordinateSelectionBox.setVisible(false);
@@ -225,8 +225,8 @@ public final class MainView extends BorderPane {
         flowLineCheck.setDisable(true);
         waveArrowCheck.setDisable(true);
         windBarbCheck.setDisable(true);
-        minField.setPromptText("Min");
-        maxField.setPromptText("Max");
+        minField.setPromptText("最小值");
+        maxField.setPromptText("最大值");
         // 手动范围区由最小值、最大值和应用按钮组成。
         HBox rangeBox = new HBox(8, minField, maxField, applyRangeButton);
 

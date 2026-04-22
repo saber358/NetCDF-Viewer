@@ -31,6 +31,7 @@ import com.example.netcdfviewer.render.WaveArrowOverlayRenderer;
 import com.example.netcdfviewer.render.WindBarbOverlayRenderer;
 import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
+import javafx.animation.PauseTransition;
 import javafx.animation.Timeline;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -122,12 +123,22 @@ public final class MainController {
     private Point2D dragAnchor;
     // 鼠标点击起点，用于区分点击与拖拽。
     private Point2D clickAnchor;
+    // Debounces expensive renders after mouse navigation.
+    private final PauseTransition navigationRenderDelay = new PauseTransition(Duration.millis(160));
     // 最近一次打开或导出的目录。
     private Path lastDirectory = Paths.get(System.getProperty("user.home", "."));
     // 渲染序号，用于丢弃旧的后台渲染结果。
     private volatile long renderSequence;
+    // Increments whenever the viewport or render inputs change.
+    private volatile long renderInputSequence;
+    // Input revision captured by the next render task.
+    private long pendingRenderInputSequence;
+    // Whether the next render should keep the current frame visible.
+    private boolean pendingKeepCurrentFrameVisible;
     // 最近一次成功渲染的查询上下文。
     private RenderQueryContext latestRenderQueryContext;
+    // Query context retained while viewport preview is active.
+    private RenderQueryContext navigationPreviewQueryContext;
     // 当前海岸线叠加层。
     private CoastlineOverlay currentOverlay;
     // 当前数据集识别出的波场变量配对。
@@ -138,12 +149,18 @@ public final class MainController {
     private WindVariablePair activeWindPair;
     // 最近一次成功渲染的底图。
     private WritableImage latestBaseImage;
+    // Last complete rendered frame used for navigation preview.
+    private WritableImage latestCompositeImage;
+    // Viewport snapshot that produced the composite preview cache.
+    private ViewportState.Snapshot latestCompositeSnapshot;
     // 最近一次成功渲染的波场箭头叠加数据。
     private WaveOverlayFrame latestWaveOverlayFrame;
     // 最近一次成功渲染的流线叠加数据。
     private FlowOverlayFrame latestFlowOverlayFrame;
     // 最近一次成功渲染的风羽叠加数据。
     private WindOverlayFrame latestWindOverlayFrame;
+    // True while the canvas shows a transformed preview frame.
+    private boolean navigationPreviewActive;
     // 流线亮带动画时间线。
     private Timeline flowAnimationTimeline;
     // 当前流线亮带动画相位。
@@ -213,9 +230,8 @@ public final class MainController {
         view.getWindBarbCheck().setSelected(false);
         view.getRemoveDatasetButton().setDisable(true);
         // 设置初始状态提示。
-        setStatus("Ready to open NetCDF file.");
-        // 启动时默认启用内置海岸线。
-        initializeBuiltInCoastline();
+        setStatus("准备打开 NetCDF 文件。");
+        navigationRenderDelay.setOnFinished(event -> renderCurrentSelection(true));
         // 窗口关闭时释放渲染线程池。
         stage.setOnHidden(event -> shutdownRenderExecutors());
 
@@ -344,7 +360,7 @@ public final class MainController {
             Point2D delta = currentPoint.subtract(dragAnchor);
             viewportState.pan(delta.getX(), delta.getY());
             dragAnchor = currentPoint;
-            renderCurrentSelection();
+            previewCurrentViewport();
         });
         view.getCanvasHost().setOnMouseReleased(event -> {
             if (event.getButton() == MouseButton.PRIMARY && clickAnchor != null) {
@@ -362,9 +378,42 @@ public final class MainController {
             }
             double factor = event.getDeltaY() >= 0 ? 1.12 : 1.0 / 1.12;
             viewportState.zoom(factor, event.getX(), event.getY());
-            renderCurrentSelection();
+            previewCurrentViewport();
             event.consume();
         });
+    }
+
+    private void previewCurrentViewport() {
+        logger.info("Start viewport preview");
+
+        if (currentDataset == null || currentVariable == null || !currentVariable.plottable() || activeSpatialDomain == null) {
+            logger.info("Viewport preview skipped: no active plottable selection");
+            return;
+        }
+
+        renderInputSequence++;
+        stopFlowAnimation();
+        navigationPreviewActive = true;
+
+        RenderQueryContext context = latestRenderQueryContext;
+        if (context != null) {
+            latestRenderQueryContext = new RenderQueryContext(
+                context.dataset(),
+                context.spatialDomain(),
+                context.variable(),
+                context.layerIndex(),
+                context.values(),
+                context.cellCentered(),
+                context.fillValue(),
+                viewportState.snapshot()
+            );
+        }
+        navigationPreviewQueryContext = latestRenderQueryContext;
+
+        boolean previewDrawn = drawViewportPreview();
+        navigationRenderDelay.stop();
+        navigationRenderDelay.playFromStart();
+        logger.info(() -> "Finish viewport preview, drawn=" + previewDrawn);
     }
 
     private void wireDragAndDrop() {
@@ -399,11 +448,11 @@ public final class MainController {
                 loadFile(path);
             } else {
                 // 用户取消时仅更新状态栏。
-                setStatus("Open canceled.");
+                setStatus("已取消打开文件。");
             }
         } catch (Exception exception) {
             // 文件选择器异常时提示用户。
-            showError("Open failed", "Could not open the file chooser: " + exception.getMessage());
+            showError("打开失败", "无法打开文件选择器：" + exception.getMessage());
         }
     }
 
@@ -413,20 +462,10 @@ public final class MainController {
             if (path != null) {
                 loadCoastline(path);
             } else {
-                setStatus("Load coastline canceled.");
+                setStatus("已取消加载海岸线。");
             }
         } catch (Exception exception) {
-            showError("Load coastline failed", "Could not open the coastline file chooser: " + exception.getMessage());
-        }
-    }
-
-    private void initializeBuiltInCoastline() {
-        try {
-            currentOverlay = BuiltInCoastline.load();
-            view.getClearCoastlineMenuItem().setDisable(false);
-        } catch (IOException ignored) {
-            currentOverlay = null;
-            view.getClearCoastlineMenuItem().setDisable(true);
+            showError("加载海岸线失败", "无法打开海岸线文件选择器：" + exception.getMessage());
         }
     }
 
@@ -441,7 +480,7 @@ public final class MainController {
         LoadedDatasetItem existing = findLoadedDataset(normalizedPath);
         if (existing != null) {
             view.getDatasetList().getSelectionModel().select(existing);
-            setStatus("Dataset already loaded. Switched to existing entry.");
+            setStatus("数据已加载，已切换到已有条目。");
             return;
         }
 
@@ -449,9 +488,9 @@ public final class MainController {
         lastDirectory = normalizedPath.getParent();
         // 如果当前还没有任何数据集，则显示加载中的占位提示。
         if (loadedDatasets.isEmpty()) {
-            renderPlaceholder("Loading " + normalizedPath.getFileName() + " ...");
+            renderPlaceholder("正在加载 " + normalizedPath.getFileName() + " ...");
         }
-        setStatus("Loading " + normalizedPath.getFileName() + " ...");
+        setStatus("正在加载 " + normalizedPath.getFileName() + " ...");
 
         // 使用后台任务读取文件，避免卡住界面线程。
         Task<ParsedDataset> loadTask = new Task<>() {
@@ -466,9 +505,9 @@ public final class MainController {
         // 读取失败时显示错误并回到占位状态。
         loadTask.setOnFailed(event -> {
             Throwable error = loadTask.getException();
-            showError("Open failed", "Could not parse " + normalizedPath.getFileName() + ": " + (error == null ? "unknown error" : error.getMessage()));
+            showError("打开失败", "无法解析 " + normalizedPath.getFileName() + "：" + (error == null ? "未知错误" : error.getMessage()));
             if (loadedDatasets.isEmpty()) {
-                renderPlaceholder("Failed to load " + normalizedPath.getFileName() + ".");
+                renderPlaceholder("加载失败：" + normalizedPath.getFileName() + "。");
             }
         });
 
@@ -483,13 +522,13 @@ public final class MainController {
         LoadedDatasetItem existing = findLoadedDataset(path);
         if (existing != null) {
             view.getDatasetList().getSelectionModel().select(existing);
-            setStatus("Dataset already loaded. Switched to existing entry.");
+            setStatus("数据已加载，已切换到已有条目。");
             return;
         }
         LoadedDatasetItem item = new LoadedDatasetItem(path, path.getFileName().toString(), dataset);
         loadedDatasets.add(item);
         view.getDatasetList().getSelectionModel().select(item);
-        setStatus("Loaded " + path.getFileName());
+        setStatus("已加载 " + path.getFileName());
     }
 
     private void openFile(Path path) {
@@ -498,14 +537,14 @@ public final class MainController {
             LoadedDatasetItem existing = findLoadedDataset(normalizedPath);
             if (existing != null) {
                 view.getDatasetList().getSelectionModel().select(existing);
-                setStatus("Dataset already loaded. Switched to existing entry.");
+                setStatus("数据已加载，已切换到已有条目。");
                 return;
             }
             lastDirectory = normalizedPath.getParent();
             ParsedDataset dataset = parser.open(normalizedPath);
             addLoadedDataset(normalizedPath, dataset);
         } catch (Exception exception) {
-            showError("Open failed", "Could not parse " + path.getFileName() + ": " + exception.getMessage());
+            showError("打开失败", "无法解析 " + path.getFileName() + "：" + exception.getMessage());
         }
     }
 
@@ -533,9 +572,9 @@ public final class MainController {
         updateCoordinateControls();
         // 将该数据集的变量加载到变量列表中。
         view.getVariableList().setItems(FXCollections.observableArrayList(item.dataset().variables()));
-        view.getCurrentVariableLabel().setText("Variable: -");
-        view.getRangeInfoLabel().setText("Range: -");
-        view.getLayerInfoLabel().setText("Layer: -");
+        view.getCurrentVariableLabel().setText("变量：-");
+        view.getRangeInfoLabel().setText("范围：-");
+        view.getLayerInfoLabel().setText("图层：-");
         updateFlowLineControls();
         updateWaveArrowControls();
         updateWindBarbControls();
@@ -575,17 +614,17 @@ public final class MainController {
             }
             currentOverlay = overlay;
             view.getClearCoastlineMenuItem().setDisable(false);
-            setStatus("Loaded coastline " + overlay.displayName() + " (" + overlay.paths().size() + " paths)");
+            setStatus("已加载海岸线 " + overlay.displayName() + "（" + overlay.paths().size() + " 条路径）");
             redrawCurrentView();
         } catch (IOException exception) {
-            showError("Load coastline failed", "Could not parse coastline overlay: " + exception.getMessage());
+            showError("加载海岸线失败", "无法解析海岸线叠加层：" + exception.getMessage());
         }
     }
 
     private void clearCoastlineOverlay() {
         currentOverlay = null;
         view.getClearCoastlineMenuItem().setDisable(true);
-        setStatus("Cleared coastline overlay.");
+        setStatus("已清除海岸线叠加层。");
         redrawCurrentView();
     }
 
@@ -593,17 +632,17 @@ public final class MainController {
         try {
             currentOverlay = BuiltInCoastline.load();
             view.getClearCoastlineMenuItem().setDisable(false);
-            setStatus("Using built-in coastline.");
+            setStatus("已使用内置海岸线。");
             redrawCurrentView();
         } catch (IOException exception) {
-            showError("Built-in coastline failed", "Could not load the built-in coastline resource: " + exception.getMessage());
+            showError("内置海岸线加载失败", "无法加载内置海岸线资源：" + exception.getMessage());
         }
     }
 
     private void removeSelectedDataset() {
         LoadedDatasetItem selected = view.getDatasetList().getSelectionModel().getSelectedItem();
         if (selected == null) {
-            setStatus("No dataset selected to remove.");
+            setStatus("没有选中要删除的数据。");
             return;
         }
 
@@ -613,13 +652,13 @@ public final class MainController {
 
         if (loadedDatasets.isEmpty()) {
             clearActiveDatasetState();
-            setStatus("Removed " + selected.displayName());
+            setStatus("已删除 " + selected.displayName());
             return;
         }
 
         int fallbackIndex = Math.min(selectedIndex, loadedDatasets.size() - 1);
         view.getDatasetList().getSelectionModel().select(fallbackIndex);
-        setStatus("Removed " + selected.displayName());
+        setStatus("已删除 " + selected.displayName());
     }
 
     private void clearActiveDatasetState() {
@@ -633,26 +672,31 @@ public final class MainController {
         activeVelocityPair = null;
         activeWindPair = null;
         latestRenderQueryContext = null;
+        navigationPreviewQueryContext = null;
         latestBaseImage = null;
+        latestCompositeImage = null;
+        latestCompositeSnapshot = null;
         latestWaveOverlayFrame = null;
         latestFlowOverlayFrame = null;
         latestWindOverlayFrame = null;
+        navigationPreviewActive = false;
         flowAnimationPhase = 0.0;
+        navigationRenderDelay.stop();
         stopFlowAnimation();
         view.getVariableList().getItems().clear();
-        view.getDatasetLabel().setText("No file loaded");
-        view.getCoordinateVariableLabel().setText("Coordinates: -");
+        view.getDatasetLabel().setText("未加载文件");
+        view.getCoordinateVariableLabel().setText("坐标：-");
         view.getCoordinateSelectionBox().setVisible(false);
         view.getCoordinateSelectionBox().setManaged(false);
         view.getCoordinateXCombo().getItems().clear();
         view.getCoordinateYCombo().getItems().clear();
         view.getCoordinateXCombo().setDisable(true);
         view.getCoordinateYCombo().setDisable(true);
-        view.getConnectivityVariableLabel().setText("Connectivity: -");
-        view.getVariableMetaLabel().setText("Variable details: -");
-        view.getCurrentVariableLabel().setText("Variable: -");
-        view.getLayerInfoLabel().setText("Layer: -");
-        view.getRangeInfoLabel().setText("Range: -");
+        view.getConnectivityVariableLabel().setText("连接关系：-");
+        view.getVariableMetaLabel().setText("变量详情：-");
+        view.getCurrentVariableLabel().setText("变量：-");
+        view.getLayerInfoLabel().setText("图层：-");
+        view.getRangeInfoLabel().setText("范围：-");
         view.getSummaryArea().clear();
         view.getAttributesArea().clear();
         view.getWarningsArea().clear();
@@ -668,7 +712,7 @@ public final class MainController {
         view.getWaveArrowCheck().setDisable(true);
         view.getWindBarbCheck().setSelected(false);
         view.getWindBarbCheck().setDisable(true);
-        renderPlaceholder("Open a NetCDF file to begin.");
+        renderPlaceholder("打开 NetCDF 文件开始。");
         updateWindowTitle();
 
         logger.info("活动数据集状态清空完成");
@@ -1041,36 +1085,36 @@ public final class MainController {
         // 更新当前数据集名称标签。
         view.getDatasetLabel().setText(dataset.sourcePath().getFileName().toString());
         // 更新坐标变量标签。
-        view.getCoordinateVariableLabel().setText("Coordinates: "
+        view.getCoordinateVariableLabel().setText("坐标："
             + Optional.ofNullable(activeCoordinateBinding == null ? dataset.xVariableName() : activeCoordinateBinding.xName()).orElse("-")
             + " / "
             + Optional.ofNullable(activeCoordinateBinding == null ? dataset.yVariableName() : activeCoordinateBinding.yName()).orElse("-"));
         // 更新连接变量标签。
-        view.getConnectivityVariableLabel().setText("Connectivity: "
+        view.getConnectivityVariableLabel().setText("连接关系："
             + Optional.ofNullable(dataset.connectivityVariableName()).orElse("-"));
         // 拼接摘要信息文本。
-        String summary = "File: " + dataset.sourcePath().toAbsolutePath() + System.lineSeparator()
-            + "Coordinates: " + Optional.ofNullable(activeCoordinateBinding == null ? dataset.xVariableName() : activeCoordinateBinding.xName()).orElse("-")
+        String summary = "文件：" + dataset.sourcePath().toAbsolutePath() + System.lineSeparator()
+            + "坐标：" + Optional.ofNullable(activeCoordinateBinding == null ? dataset.xVariableName() : activeCoordinateBinding.xName()).orElse("-")
             + " / " + Optional.ofNullable(activeCoordinateBinding == null ? dataset.yVariableName() : activeCoordinateBinding.yName()).orElse("-") + System.lineSeparator()
-            + "Connectivity: " + Optional.ofNullable(dataset.connectivityVariableName()).orElse("-") + System.lineSeparator()
-            + "Geometry: " + geometrySummary(dataset, activeSpatialDomain == null ? dataset.spatialDomain() : activeSpatialDomain) + System.lineSeparator()
+            + "连接关系：" + Optional.ofNullable(dataset.connectivityVariableName()).orElse("-") + System.lineSeparator()
+            + "几何信息：" + geometrySummary(dataset, activeSpatialDomain == null ? dataset.spatialDomain() : activeSpatialDomain) + System.lineSeparator()
             + System.lineSeparator()
-            + "Dimensions:" + System.lineSeparator()
+            + "维度：" + System.lineSeparator()
             + dataset.dimensions().entrySet().stream()
-            .map(entry -> "  - " + entry.getKey() + " = " + entry.getValue())
-            .collect(Collectors.joining(System.lineSeparator()));
+                .map(entry -> "  - " + entry.getKey() + " = " + entry.getValue())
+                .collect(Collectors.joining(System.lineSeparator()));
 
         // 更新摘要区域。
         view.getSummaryArea().setText(summary);
         // 更新全局属性区域。
         view.getAttributesArea().setText(dataset.globalAttributes().isEmpty()
-            ? "No global attributes."
+            ? "没有全局属性。"
             : dataset.globalAttributes().entrySet().stream()
-            .map(entry -> entry.getKey() + " = " + entry.getValue())
-            .collect(Collectors.joining(System.lineSeparator())));
+                .map(entry -> entry.getKey() + " = " + entry.getValue())
+                .collect(Collectors.joining(System.lineSeparator())));
         // 更新警告区域。
         view.getWarningsArea().setText(dataset.warnings().isEmpty()
-            ? "No warnings."
+            ? "没有警告。"
             : String.join(System.lineSeparator(), dataset.warnings()));
     }
 
@@ -1079,7 +1123,7 @@ public final class MainController {
         if (currentVariable == null || !currentVariable.plottable() || !currentVariable.layered()) {
             view.getDepthSlider().setDisable(true);
             view.getDepthSlider().setValue(0);
-            view.getLayerInfoLabel().setText("Layer: single");
+            view.getLayerInfoLabel().setText("图层：单层");
             view.getVisualizeButton().setDisable(currentVariable == null || !currentVariable.plottable());
             return;
         }
@@ -1094,18 +1138,18 @@ public final class MainController {
     private void updateVariableMeta() {
         // 没有变量时显示占位提示。
         if (currentVariable == null) {
-            view.getVariableMetaLabel().setText("Variable details: -");
+            view.getVariableMetaLabel().setText("变量详情：-");
             return;
         }
         // 根据变量是否可绘制、是否分层以及空间位置生成说明文本。
         String mode = currentVariable.plottable()
-            ? (currentVariable.layered() ? "Layered " : "Single-layer ")
+            ? (currentVariable.layered() ? "分层" : "单层")
                 + (currentVariable.geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
-                    ? (currentVariable.cellCentered() ? "structured cell field" : "structured node field")
-                    : (currentVariable.elementCentered() ? "element field" : "node field"))
-            : "Info only";
+                    ? (currentVariable.cellCentered() ? "规则格网单元场" : "规则格网节点场")
+                    : (currentVariable.elementCentered() ? "单元场" : "节点场"))
+            : "仅信息";
         // 更新变量细节标签。
-        view.getVariableMetaLabel().setText("Variable details: "
+        view.getVariableMetaLabel().setText("变量详情："
             + currentVariable.presentableType()
             + " "
             + currentVariable.dimensionSummary()
@@ -1188,26 +1232,30 @@ public final class MainController {
     }
 
     private void renderCurrentSelection() {
+        renderCurrentSelection(false);
+    }
+
+    private void renderCurrentSelection(boolean keepCurrentFrameVisible) {
         // 获取主画布对象。
         Canvas canvas = view.getRenderCanvas();
         // 尚未打开文件时显示默认提示。
         if (currentDataset == null) {
-            renderPlaceholder("Open a NetCDF file to begin.");
+            renderPlaceholder("打开 NetCDF 文件开始。");
             return;
         }
         // 文件没有可用三角网时仅展示提示，不执行绘制。
         if (activeSpatialDomain == null) {
-            renderPlaceholder("This file opened successfully, but it does not contain a plottable spatial domain.");
+            renderPlaceholder("文件已打开，但不包含可绘制的空间域。");
             return;
         }
         // 未选择变量时提示用户先选择变量。
         if (currentVariable == null) {
-            renderPlaceholder("Select a variable from the list.");
+            renderPlaceholder("请先从列表中选择变量。");
             return;
         }
         // 只读信息变量不能参与平面绘制。
         if (!currentVariable.plottable()) {
-            renderPlaceholder("Selected variable is informational only and cannot be rendered as a planar scalar field.");
+            renderPlaceholder("当前变量仅用于信息展示，不能绘制为二维平面标量场。");
             return;
         }
 
@@ -1220,7 +1268,7 @@ public final class MainController {
             RangeStats computedRange = RenderMath.computeRange(values, currentVariable.fillValue());
             // 无有效值时直接显示提示。
             if (computedRange.empty()) {
-                renderPlaceholder("Selected layer contains no valid values.");
+                renderPlaceholder("当前图层没有有效值。");
                 return;
             }
             // 根据自动或手动配置得到最终展示范围。
@@ -1239,19 +1287,46 @@ public final class MainController {
             long requestId = ++renderSequence;
             // 新一轮渲染开始时先清空旧的查询上下文，避免点击命中过期结果。
             latestRenderQueryContext = null;
+            long inputSequence = ++renderInputSequence;
+            WritableImage preservedBaseImage = latestBaseImage;
+            WritableImage preservedCompositeImage = latestCompositeImage;
+            ViewportState.Snapshot preservedCompositeSnapshot = latestCompositeSnapshot;
+            WaveOverlayFrame preservedWaveOverlayFrame = latestWaveOverlayFrame;
+            FlowOverlayFrame preservedFlowOverlayFrame = latestFlowOverlayFrame;
+            WindOverlayFrame preservedWindOverlayFrame = latestWindOverlayFrame;
+            if (!keepCurrentFrameVisible) {
+                navigationRenderDelay.stop();
+                navigationPreviewActive = false;
+            }
             latestWaveOverlayFrame = null;
             latestFlowOverlayFrame = null;
             latestWindOverlayFrame = null;
             stopFlowAnimation();
             // 显示渲染中提示。
-            view.getOverlayLabel().setText("Rendering " + currentVariable.name() + " ...");
+            view.getOverlayLabel().setText("正在渲染 " + currentVariable.name() + " ...");
             view.getOverlayLabel().setVisible(true);
-            setStatus("Rendering " + currentVariable.name() + " ...");
+            setStatus("正在渲染 " + currentVariable.name() + " ...");
+            if (keepCurrentFrameVisible) {
+                latestRenderQueryContext = navigationPreviewQueryContext;
+                latestBaseImage = preservedBaseImage;
+                latestCompositeImage = preservedCompositeImage;
+                latestCompositeSnapshot = preservedCompositeSnapshot;
+                latestWaveOverlayFrame = preservedWaveOverlayFrame;
+                latestFlowOverlayFrame = preservedFlowOverlayFrame;
+                latestWindOverlayFrame = preservedWindOverlayFrame;
+                view.getOverlayLabel().setVisible(false);
+            } else {
+                latestBaseImage = null;
+                latestCompositeImage = null;
+                latestCompositeSnapshot = null;
+            }
+            pendingRenderInputSequence = inputSequence;
+            pendingKeepCurrentFrameVisible = keepCurrentFrameVisible;
             // 在后台线程中执行真正的图像渲染。
             renderAsync(requestId, layerIndex, values, colorMap, displayRange, wavePair, flowPair, windPair);
         } catch (Exception exception) {
             // 渲染准备阶段异常时，直接退回占位提示。
-            renderPlaceholder("Could not render the selected variable: " + exception.getMessage());
+            renderPlaceholder("无法渲染当前变量：" + exception.getMessage());
         }
     }
 
@@ -1273,6 +1348,8 @@ public final class MainController {
         int width = Math.max(1, (int) Math.round(canvas.getWidth()));
         int height = Math.max(1, (int) Math.round(canvas.getHeight()));
         ViewportState.Snapshot snapshot = viewportState.snapshot();
+        long inputSequence = pendingRenderInputSequence;
+        boolean keepCurrentFrameVisible = pendingKeepCurrentFrameVisible;
 
         /*
          * ========================================================================
@@ -1343,13 +1420,18 @@ public final class MainController {
         // 渲染成功后回到界面线程刷新画布。
         renderTask.setOnSucceeded(event -> {
             // 如果当前结果已经过期，则直接丢弃。
-            if (requestId != renderSequence || variable != currentVariable || dataset != currentDataset) {
+            if (requestId != renderSequence
+                || inputSequence != renderInputSequence
+                || variable != currentVariable
+                || dataset != currentDataset) {
                 return;
             }
             RenderFrame frame = renderTask.getValue();
             if (frame == null) {
                 return;
             }
+            navigationPreviewActive = false;
+            navigationPreviewQueryContext = null;
             latestBaseImage = frame.image();
             latestWaveOverlayFrame = frame.waveOverlayFrame();
             latestFlowOverlayFrame = frame.flowOverlayFrame();
@@ -1368,11 +1450,11 @@ public final class MainController {
                 snapshot
             );
             // 用缓存底图和叠加层刷新主画布。
-            drawLatestFrame();
+            drawLatestFrame(true);
             // 更新当前变量标签。
-            view.getCurrentVariableLabel().setText("Variable: " + variable.name() + " " + variable.dimensionSummary());
+            view.getCurrentVariableLabel().setText("变量：" + variable.name() + " " + variable.dimensionSummary());
             // 更新范围标签。
-            view.getRangeInfoLabel().setText("Range: " + format(displayRange.min()) + " to " + format(displayRange.max()));
+            view.getRangeInfoLabel().setText("范围：" + format(displayRange.min()) + " 到 " + format(displayRange.max()));
             // 更新层信息标签。
             updateLayerLabel(layerIndex);
             // 更新窗口标题。
@@ -1384,18 +1466,25 @@ public final class MainController {
             view.getExportPngMenuItem().setDisable(false);
             // 更新状态栏。
             setStatus(frame.overlayMessage() == null || frame.overlayMessage().isBlank()
-                ? "Rendered " + variable.name()
+                ? "已渲染 " + variable.name()
                 : frame.overlayMessage());
         });
 
         // 渲染失败时退回错误占位信息。
         renderTask.setOnFailed(event -> {
-            if (requestId != renderSequence) {
+            if (requestId != renderSequence || inputSequence != renderInputSequence) {
+                return;
+            }
+            Throwable error = renderTask.getException();
+            if (keepCurrentFrameVisible && latestRenderQueryContext != null) {
+                view.getOverlayLabel().setVisible(false);
+                setStatus("无法刷新当前视图：" + (error == null ? "未知错误" : error.getMessage()));
                 return;
             }
             stopFlowAnimation();
-            Throwable error = renderTask.getException();
-            renderPlaceholder("Could not render the selected variable: " + (error == null ? "unknown error" : error.getMessage()));
+            navigationPreviewActive = false;
+            navigationPreviewQueryContext = null;
+            renderPlaceholder("无法渲染当前变量：" + (error == null ? "未知错误" : error.getMessage()));
         });
 
         // 1.2 复用固定线程池执行渲染任务，并清空过期排队任务。
@@ -1597,7 +1686,7 @@ public final class MainController {
             return new OverlayBuildResult<>(frame, null);
         } catch (Exception exception) {
             logger.info(() -> "波浪叠加层构建结束, framePresent=false, reason=" + exception.getMessage());
-            return new OverlayBuildResult<>(null, "Wave arrows skipped: " + exception.getMessage());
+            return new OverlayBuildResult<>(null, "已跳过波浪箭头叠加：" + exception.getMessage());
         }
     }
 
@@ -1667,7 +1756,7 @@ public final class MainController {
             return new OverlayBuildResult<>(frame, null);
         } catch (Exception exception) {
             logger.info(() -> "海流叠加层构建结束, framePresent=false, reason=" + exception.getMessage());
-            return new OverlayBuildResult<>(null, "Flow lines skipped: " + exception.getMessage());
+            return new OverlayBuildResult<>(null, "已跳过海流流线叠加：" + exception.getMessage());
         }
     }
 
@@ -1736,7 +1825,7 @@ public final class MainController {
             return new OverlayBuildResult<>(frame, null);
         } catch (Exception exception) {
             logger.info(() -> "风场叠加层构建结束, framePresent=false, reason=" + exception.getMessage());
-            return new OverlayBuildResult<>(null, "Wind barbs skipped: " + exception.getMessage());
+            return new OverlayBuildResult<>(null, "已跳过风场风羽叠加：" + exception.getMessage());
         }
     }
 
@@ -1768,6 +1857,10 @@ public final class MainController {
      *   2) 再按当前勾选状态补流线、波场箭头和海岸线
      */
     private void drawLatestFrame() {
+        drawLatestFrame(false);
+    }
+
+    private void drawLatestFrame(boolean refreshCompositeCache) {
         // 3.1 没有缓存底图或查询上下文时直接返回。
         if (latestBaseImage == null || latestRenderQueryContext == null) {
             return;
@@ -1863,6 +1956,69 @@ public final class MainController {
             currentOverlay,
             latestRenderQueryContext.snapshot()
         );
+        if (refreshCompositeCache) {
+            cacheLatestCompositeFrame();
+        }
+    }
+
+    private boolean drawViewportPreview() {
+        logger.info("Start drawing viewport preview");
+
+        if (latestCompositeImage == null || latestCompositeSnapshot == null || latestRenderQueryContext == null) {
+            logger.info("Finish drawing viewport preview, drawn=false");
+            return false;
+        }
+
+        ViewportState.Snapshot currentSnapshot = latestRenderQueryContext.snapshot();
+        double sourceScale = latestCompositeSnapshot.scale();
+        if (!Double.isFinite(sourceScale) || sourceScale <= 0.0 || !Double.isFinite(currentSnapshot.scale())) {
+            logger.info("Finish drawing viewport preview, drawn=false");
+            return false;
+        }
+
+        double scaleRatio = currentSnapshot.scale() / sourceScale;
+        double translateX = currentSnapshot.translateX() - scaleRatio * latestCompositeSnapshot.translateX();
+        double translateY = currentSnapshot.translateY() - scaleRatio * latestCompositeSnapshot.translateY();
+        if (!Double.isFinite(scaleRatio) || !Double.isFinite(translateX) || !Double.isFinite(translateY) || scaleRatio <= 0.0) {
+            logger.info("Finish drawing viewport preview, drawn=false");
+            return false;
+        }
+
+        Canvas canvas = view.getRenderCanvas();
+        canvas.getGraphicsContext2D().clearRect(0, 0, canvas.getWidth(), canvas.getHeight());
+        canvas.getGraphicsContext2D().save();
+        canvas.getGraphicsContext2D().translate(translateX, translateY);
+        canvas.getGraphicsContext2D().scale(scaleRatio, scaleRatio);
+        canvas.getGraphicsContext2D().drawImage(latestCompositeImage, 0, 0);
+        canvas.getGraphicsContext2D().restore();
+        view.getOverlayLabel().setVisible(false);
+
+        logger.info("Finish drawing viewport preview, drawn=true");
+        return true;
+    }
+
+    private void cacheLatestCompositeFrame() {
+        logger.info("Start caching composite frame");
+
+        if (latestRenderQueryContext == null) {
+            latestCompositeImage = null;
+            latestCompositeSnapshot = null;
+            logger.info("Finish caching composite frame, cached=false");
+            return;
+        }
+
+        Canvas canvas = view.getRenderCanvas();
+        int width = Math.max(1, (int) Math.round(canvas.getWidth()));
+        int height = Math.max(1, (int) Math.round(canvas.getHeight()));
+        if (latestCompositeImage == null
+            || Math.round(latestCompositeImage.getWidth()) != width
+            || Math.round(latestCompositeImage.getHeight()) != height) {
+            latestCompositeImage = new WritableImage(width, height);
+        }
+        latestCompositeImage = canvas.snapshot(new SnapshotParameters(), latestCompositeImage);
+        latestCompositeSnapshot = latestRenderQueryContext.snapshot();
+
+        logger.info("Finish caching composite frame, cached=true");
     }
 
     /*
@@ -1885,7 +2041,7 @@ public final class MainController {
         if (flowAnimationTimeline == null) {
             flowAnimationTimeline = new Timeline(new KeyFrame(Duration.millis(80), event -> {
                 flowAnimationPhase += 0.06;
-                drawLatestFrame();
+                drawLatestFrame(false);
             }));
             flowAnimationTimeline.setCycleCount(Animation.INDEFINITE);
         }
@@ -1940,15 +2096,15 @@ public final class MainController {
     private void updateLayerLabel(int layerIndex) {
         // 单层变量只显示固定文本。
         if (currentVariable == null || !currentVariable.layered()) {
-            view.getLayerInfoLabel().setText("Layer: single");
+            view.getLayerInfoLabel().setText("图层：单层");
             return;
         }
         // 先显示层号与总层数。
-        String label = "Layer: " + (layerIndex + 1) + " / " + currentVariable.layerCount();
+        String label = "图层：" + (layerIndex + 1) + " / " + currentVariable.layerCount();
         // 如果存在实际层值数组，则附加显示对应的层值。
         double[] axisValues = currentDataset.axisValues(currentVariable.layerDimensionName()).orElse(null);
         if (axisValues != null && layerIndex < axisValues.length) {
-            label += " (value=" + format(axisValues[layerIndex]) + ")";
+            label += "（值=" + format(axisValues[layerIndex]) + "）";
         }
         view.getLayerInfoLabel().setText(label);
     }
@@ -1963,10 +2119,15 @@ public final class MainController {
         view.getOverlayLabel().setVisible(true);
         // 占位状态下清空最近一次可查询渲染上下文。
         latestRenderQueryContext = null;
+        navigationPreviewQueryContext = null;
         latestBaseImage = null;
+        latestCompositeImage = null;
+        latestCompositeSnapshot = null;
         latestWaveOverlayFrame = null;
         latestFlowOverlayFrame = null;
         latestWindOverlayFrame = null;
+        navigationPreviewActive = false;
+        navigationRenderDelay.stop();
         stopFlowAnimation();
         // 占位状态下不允许导出。
         view.getExportButton().setDisable(true);
@@ -1979,7 +2140,7 @@ public final class MainController {
         // 没有完成过可视化渲染时，不允许单点查询。
         RenderQueryContext context = latestRenderQueryContext;
         if (context == null) {
-            setStatus("Point query is not available until a render completes.");
+            setStatus("渲染完成后才能使用单点查询。");
             return;
         }
 
@@ -1996,31 +2157,31 @@ public final class MainController {
                 context.layerIndex()
             );
             if (!result.hit() || result.reason() == StructuredPointQuery.Reason.NO_HIT || result.reason() == StructuredPointQuery.Reason.UNSUPPORTED) {
-                setStatus("No structured-grid value at clicked location.");
+                setStatus("点击位置没有规则格网值。");
                 return;
             }
             if (!result.hasValue()) {
-                setStatus("Clicked structured-grid sample contains no valid value.");
+                setStatus("点击到的规则格网样本没有有效值。");
                 return;
             }
 
             StringBuilder text = new StringBuilder()
-                .append("Query ")
+                .append("查询 ")
                 .append(context.variable().name());
             if (context.variable().layered()) {
-                text.append(" layer ").append(result.layerIndex() + 1);
+                text.append(" 第 ").append(result.layerIndex() + 1).append(" 层");
             }
-            text.append(" at (")
+            text.append("，位置 (")
                 .append(format(result.worldX()))
                 .append(", ")
                 .append(format(result.worldY()))
-                .append("): ")
+                .append(")：")
                 .append(result.sampleType(context.cellCentered()))
-                .append(" [row=")
+                .append(" [行=")
                 .append(result.rowIndex())
-                .append(", col=")
+                .append(", 列=")
                 .append(result.columnIndex())
-                .append("], value=")
+                .append("]，值=")
                 .append(format(result.value()));
             setStatus(text.toString());
             return;
@@ -2040,29 +2201,29 @@ public final class MainController {
 
         // 未命中网格时给出明确提示。
         if (!result.hit() || result.reason() == MeshPointQuery.Reason.NO_HIT) {
-            setStatus("No mesh value at clicked location.");
+            setStatus("点击位置没有三角网值。");
             return;
         }
         // 命中但当前值不可用时给出明确提示。
         if (!result.hasValue()) {
-            setStatus("Clicked triangle contains no valid value.");
+            setStatus("点击到的三角形没有有效值。");
             return;
         }
 
         // 构造单点查询结果文本。
         StringBuilder text = new StringBuilder()
-            .append("Query ")
+            .append("查询 ")
             .append(context.variable().name());
         if (context.variable().layered()) {
-            text.append(" layer ").append(result.layerIndex() + 1);
+            text.append(" 第 ").append(result.layerIndex() + 1).append(" 层");
         }
-        text.append(" at (")
+        text.append("，位置 (")
             .append(format(result.worldX()))
             .append(", ")
             .append(format(result.worldY()))
-            .append("): triangle #")
+            .append(")：三角形 #")
             .append(result.triangleIndex())
-            .append(", value=")
+            .append("，值=")
             .append(format(result.value()));
         setStatus(text.toString());
     }
@@ -2072,7 +2233,7 @@ public final class MainController {
             // 弹出保存对话框让用户选择输出位置。
             Path path = chooseSavePngFile();
             if (path == null) {
-                setStatus("Export canceled.");
+                setStatus("已取消导出。");
                 return;
             }
             // 更新最近目录，方便下次导出。
@@ -2081,19 +2242,22 @@ public final class MainController {
             WritableImage image = view.getVisualizationBox().snapshot(new SnapshotParameters(), null);
             // 使用专用导出工具写出 PNG。
             PngExportSupport.writePng(image, path);
-            setStatus("Exported " + path.getFileName());
+            setStatus("已导出 " + path.getFileName());
         } catch (IOException exception) {
             // 导出写文件失败时显示详细错误。
-            showError("Export failed", "Could not export PNG: " + exception.getMessage());
+            showError("导出失败", "无法导出 PNG：" + exception.getMessage());
         } catch (Exception exception) {
             // 保存对话框或其他异常统一提示。
-            showError("Export failed", "Could not open the save dialog: " + exception.getMessage());
+            showError("导出失败", "无法打开保存对话框：" + exception.getMessage());
         }
     }
 
     private void redrawCurrentView() {
+        if (navigationPreviewActive && drawViewportPreview()) {
+            return;
+        }
         if (latestBaseImage != null && latestRenderQueryContext != null) {
-            drawLatestFrame();
+            drawLatestFrame(true);
             return;
         }
         if (currentDataset != null && currentVariable != null && currentVariable.plottable()) {
@@ -2113,6 +2277,7 @@ public final class MainController {
      */
     private void shutdownRenderExecutors() {
         logger.info("开始关闭渲染线程池...");
+        navigationRenderDelay.stop();
         renderTaskExecutor.shutdownNow();
         renderComputeExecutor.shutdownNow();
         logger.info("渲染线程池关闭完成");
@@ -2138,7 +2303,7 @@ public final class MainController {
         // 弹出关于对话框，展示项目与作者信息。
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         alert.initOwner(stage);
-        alert.setTitle("About " + AppMetadata.APP_NAME);
+        alert.setTitle("关于 " + AppMetadata.APP_NAME);
         alert.setHeaderText(AppMetadata.APP_NAME + " " + AppMetadata.VERSION);
         alert.setContentText(aboutContent());
         alert.showAndWait();
@@ -2151,11 +2316,11 @@ public final class MainController {
             + AppMetadata.DESCRIPTION
             + System.lineSeparator()
             + System.lineSeparator()
-            + "Version: " + AppMetadata.VERSION
+            + "版本：" + AppMetadata.VERSION
             + System.lineSeparator()
-            + "Author: " + AppMetadata.AUTHOR_NAME
+            + "作者：" + AppMetadata.AUTHOR_NAME
             + System.lineSeparator()
-            + "Email: " + AppMetadata.AUTHOR_EMAIL;
+            + "邮箱：" + AppMetadata.AUTHOR_EMAIL;
     }
 
     private String format(double value) {
@@ -2188,7 +2353,7 @@ public final class MainController {
 
     private void updateWindowTitle() {
         // 从应用名称开始构造标题。
-        StringBuilder title = new StringBuilder("NetCDF Viewer");
+        StringBuilder title = new StringBuilder(AppMetadata.APP_NAME);
         if (currentDataset != null) {
             // 追加当前文件名。
             title.append(" - ").append(currentDataset.sourcePath().getFileName());
@@ -2199,7 +2364,7 @@ public final class MainController {
             if (currentVariable.layered()) {
                 // 多层变量时进一步追加层号信息。
                 int layerIndex = (int) Math.round(view.getDepthSlider().getValue());
-                title.append(" [Layer ").append(layerIndex + 1).append("/").append(currentVariable.layerCount()).append("]");
+                title.append(" [第 ").append(layerIndex + 1).append("/").append(currentVariable.layerCount()).append(" 层]");
             }
         }
         stage.setTitle(title.toString());
@@ -2207,13 +2372,13 @@ public final class MainController {
 
     private String geometrySummary(ParsedDataset dataset, SpatialDomain spatialDomain) {
         if (spatialDomain == null) {
-            return "Unavailable";
+            return "不可用";
         }
         if (spatialDomain.kind() == SpatialDomain.Kind.TRIANGLE_MESH && dataset.hasMesh()) {
-            return dataset.mesh().nodeCount() + " nodes, " + dataset.mesh().triangleCount() + " triangles";
+            return dataset.mesh().nodeCount() + " 个节点，" + dataset.mesh().triangleCount() + " 个三角形";
         }
         if (spatialDomain instanceof StructuredGridDomain structuredGridDomain) {
-            return "Structured grid " + structuredGridDomain.grid().width() + " x " + structuredGridDomain.grid().height();
+            return "规则格网 " + structuredGridDomain.grid().width() + " x " + structuredGridDomain.grid().height();
         }
         return spatialDomain.kind().name();
     }
@@ -2282,7 +2447,7 @@ public final class MainController {
                 return;
             }
             // 根据变量是否可画和是否分层生成前缀标签。
-            String marker = item.plottable() ? (item.layered() ? "[Layered] " : "[Planar] ") : "[Info] ";
+            String marker = item.plottable() ? (item.layered() ? "[分层] " : "[平面] ") : "[信息] ";
             // 组合最终显示文字。
             setText(marker + item.name() + " : " + item.presentableType() + " " + item.dimensionSummary());
             // 信息型变量用灰色显示，便于用户区分。

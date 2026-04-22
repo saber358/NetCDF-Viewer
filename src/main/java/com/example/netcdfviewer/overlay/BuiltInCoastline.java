@@ -19,9 +19,9 @@ public final class BuiltInCoastline {
     public static CoastlineOverlay load() throws IOException {
         try (InputStream stream = BuiltInCoastline.class.getResourceAsStream(RESOURCE_PATH)) {
             if (stream == null) {
-                throw new IOException("Built-in coastline resource is missing: " + RESOURCE_PATH);
+                throw new IOException("缺少内置海岸线资源：" + RESOURCE_PATH);
             }
-            return GeoJsonOverlayLoader.load(stream, SYNTHETIC_PATH, "Built-in coastline");
+            return GeoJsonOverlayLoader.load(stream, SYNTHETIC_PATH, "内置海岸线");
         }
     }
 }

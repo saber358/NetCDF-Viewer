@@ -8,6 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class AppSmokeTest {
     @Test
     void appClassExposesTitleConstant() {
-        assertEquals("NetCDF Viewer", App.APP_NAME);
+        assertEquals("NetCDF 可视化工具", App.APP_NAME);
     }
 }

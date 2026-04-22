@@ -50,16 +50,27 @@ class AppBootstrapTest {
         }
 
         MainView view = viewRef.get();
-        assertEquals("Ready to open NetCDF file.", view.getStatusLabel().getText());
+        assertEquals("准备打开 NetCDF 文件。", view.getStatusLabel().getText());
         assertTrue(view.getExportButton().isDisabled());
         assertTrue(view.getVisualizeButton().isDisabled());
         assertEquals("Viridis", view.getColorMapCombo().getValue());
         assertEquals(readPomVersion(), AppMetadata.VERSION);
         assertEquals("lwj", AppMetadata.AUTHOR_NAME);
         assertEquals("2762692204@qq.com", AppMetadata.AUTHOR_EMAIL);
-        assertEquals("Author: lwj | 2762692204@qq.com", view.getAuthorLabel().getText());
-        assertEquals("Help", view.getHelpMenu().getText());
-        assertEquals("About", view.getAboutMenuItem().getText());
+        assertEquals("作者：lwj | 2762692204@qq.com", view.getAuthorLabel().getText());
+        assertEquals("帮助", view.getHelpMenu().getText());
+        assertEquals("关于", view.getAboutMenuItem().getText());
+        assertEquals("打开...", view.getOpenMenuItem().getText());
+        assertEquals("打开", view.getOpenButton().getText());
+        assertEquals("导出 PNG", view.getExportButton().getText());
+        assertEquals("重置视图", view.getResetViewButton().getText());
+        assertEquals("渲染", view.getVisualizeButton().getText());
+        assertEquals("自动范围", view.getAutoRangeCheck().getText());
+        assertEquals("海流流线", view.getFlowLineCheck().getText());
+        assertEquals("波浪箭头", view.getWaveArrowCheck().getText());
+        assertEquals("风场风羽", view.getWindBarbCheck().getText());
+        assertEquals("最小值", view.getMinField().getPromptText());
+        assertEquals("最大值", view.getMaxField().getPromptText());
         assertNotNull(App.class.getResource("/icons/app-icon.png"));
         assertNotNull(App.class.getResource("/icons/app-icon.ico"));
     }

@@ -15,7 +15,7 @@ class SwingFileDialogsTest {
     void openChooserUsesNcExtensionFilter() {
         JFileChooser chooser = SwingFileDialogs.createOpenChooser(Path.of("."));
 
-        assertEquals("Open NetCDF File", chooser.getDialogTitle());
+        assertEquals("打开 NetCDF 文件", chooser.getDialogTitle());
         assertFalse(chooser.isAcceptAllFileFilterUsed());
         assertTrue(chooser.getFileFilter() instanceof FileNameExtensionFilter);
         FileNameExtensionFilter filter = (FileNameExtensionFilter) chooser.getFileFilter();
@@ -26,7 +26,7 @@ class SwingFileDialogsTest {
     void saveChooserUsesPngExtensionFilter() {
         JFileChooser chooser = SwingFileDialogs.createSaveChooser(Path.of("."));
 
-        assertEquals("Export PNG", chooser.getDialogTitle());
+        assertEquals("导出 PNG", chooser.getDialogTitle());
         assertFalse(chooser.isAcceptAllFileFilterUsed());
         assertTrue(chooser.getFileFilter() instanceof FileNameExtensionFilter);
         FileNameExtensionFilter filter = (FileNameExtensionFilter) chooser.getFileFilter();

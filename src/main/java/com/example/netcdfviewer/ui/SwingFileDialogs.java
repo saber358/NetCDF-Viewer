@@ -22,13 +22,13 @@ public final class SwingFileDialogs {
         // 创建打开文件对话框。
         JFileChooser chooser = new JFileChooser();
         // 设置对话框标题。
-        chooser.setDialogTitle("Open NetCDF File");
+        chooser.setDialogTitle("打开 NetCDF 文件");
         // 只允许选择文件。
         chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
         // 禁用“所有文件”过滤器，避免误选。
         chooser.setAcceptAllFileFilterUsed(false);
         // 仅允许选择 .nc 文件。
-        chooser.setFileFilter(new FileNameExtensionFilter("NetCDF files (*.nc)", "nc"));
+        chooser.setFileFilter(new FileNameExtensionFilter("NetCDF 文件 (*.nc)", "nc"));
         // 如果初始目录存在，则作为默认打开路径。
         if (initialDirectory != null && Files.isDirectory(initialDirectory)) {
             chooser.setCurrentDirectory(initialDirectory.toFile());
@@ -40,13 +40,13 @@ public final class SwingFileDialogs {
         // 创建保存文件对话框。
         JFileChooser chooser = new JFileChooser();
         // 设置对话框标题。
-        chooser.setDialogTitle("Export PNG");
+        chooser.setDialogTitle("导出 PNG");
         // 只允许选择文件。
         chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
         // 禁用“所有文件”过滤器，减少误操作。
         chooser.setAcceptAllFileFilterUsed(false);
         // 仅提示保存为 PNG。
-        chooser.setFileFilter(new FileNameExtensionFilter("PNG Image (*.png)", "png"));
+        chooser.setFileFilter(new FileNameExtensionFilter("PNG 图像 (*.png)", "png"));
         // 如果初始目录存在，则作为默认保存路径。
         if (initialDirectory != null && Files.isDirectory(initialDirectory)) {
             chooser.setCurrentDirectory(initialDirectory.toFile());
@@ -56,11 +56,11 @@ public final class SwingFileDialogs {
 
     static JFileChooser createOpenCoastlineChooser(Path initialDirectory) {
         JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle("Load Coastline Overlay");
+        chooser.setDialogTitle("加载海岸线叠加层");
         chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
         chooser.setAcceptAllFileFilterUsed(false);
         chooser.setFileFilter(new FileNameExtensionFilter(
-            "Coastline files (*.geojson, *.json, *.shp)",
+            "海岸线文件 (*.geojson, *.json, *.shp)",
             "geojson",
             "json",
             "shp"
@@ -137,10 +137,10 @@ public final class SwingFileDialogs {
         } catch (InterruptedException exception) {
             // 如果线程被打断，则恢复中断标记并抛出异常。
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("File dialog was interrupted.", exception);
+            throw new IllegalStateException("文件对话框被中断。", exception);
         } catch (InvocationTargetException exception) {
             // 如果 EDT 内部执行失败，则把原始异常原因向外抛出。
-            throw new IllegalStateException("File dialog failed to open.", exception.getCause());
+            throw new IllegalStateException("文件对话框打开失败。", exception.getCause());
         }
         // 如果执行过程中捕获到运行时异常，则继续向外抛出。
         if (error.get() != null) {

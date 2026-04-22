@@ -42,7 +42,7 @@ public final class PngExportSupport {
         BufferedImage bufferedImage = SwingFXUtils.fromFXImage(image, null);
         // 如果转换失败，直接中断导出。
         if (bufferedImage == null) {
-            throw new IOException("Could not convert the JavaFX image into PNG data.");
+            throw new IOException("无法将 JavaFX 图像转换为 PNG 数据。");
         }
 
         // 通过输出流写入 PNG 文件。
