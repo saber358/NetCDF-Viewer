@@ -1,7 +1,6 @@
 package com.example.netcdfviewer.ui;
 
 import com.example.netcdfviewer.AppMetadata;
-import com.example.netcdfviewer.basemap.TileRenderer;
 import com.example.netcdfviewer.io.ParsedDataset;
 import com.example.netcdfviewer.model.VariableInfo;
 import com.example.netcdfviewer.testsupport.SampleDatasetPaths;
@@ -15,9 +14,6 @@ import javafx.stage.Stage;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import java.awt.Color;
-import java.awt.Graphics2D;
-import java.awt.image.BufferedImage;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
@@ -81,7 +77,7 @@ class MainControllerLoadFileTest {
             try {
                 Stage stage = new Stage();
                 MainView view = new MainView();
-                MainController controller = new MainController(stage, view, new TileRenderer(url -> solidTile(Color.BLUE)));
+                MainController controller = new MainController(stage, view);
                 controller.initialize();
                 stage.setScene(new Scene(view, 1440, 900));
                 stage.show();
@@ -143,56 +139,6 @@ class MainControllerLoadFileTest {
         if (errorRef.get() != null) {
             throw new AssertionError(errorRef.get());
         }
-    }
-
-    @Test
-    void selectingOsmBasemapKeepsStructuredDatasetRenderable() throws Exception {
-        CountDownLatch initLatch = new CountDownLatch(1);
-        AtomicReference<Throwable> errorRef = new AtomicReference<>();
-        AtomicReference<MainController> controllerRef = new AtomicReference<>();
-        AtomicReference<MainView> viewRef = new AtomicReference<>();
-        AtomicReference<Stage> stageRef = new AtomicReference<>();
-
-        Platform.runLater(() -> {
-            try {
-                Stage stage = new Stage();
-                MainView view = new MainView();
-                MainController controller = new MainController(stage, view, new TileRenderer(url -> solidTile(Color.BLUE)));
-                controller.initialize();
-                stage.setScene(new Scene(view, 1440, 900));
-                stage.show();
-
-                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
-                openFile.setAccessible(true);
-                openFile.invoke(controller, SampleDatasetPaths.resolve("XTPY-wrf.nc"));
-                view.getOsmBaseMapMenuItem().fire();
-
-                controllerRef.set(controller);
-                viewRef.set(view);
-                stageRef.set(stage);
-            } catch (Throwable throwable) {
-                errorRef.set(throwable);
-            } finally {
-                initLatch.countDown();
-            }
-        });
-
-        assertTrue(initLatch.await(10, TimeUnit.SECONDS));
-        if (errorRef.get() != null) {
-            throw new AssertionError(errorRef.get());
-        }
-
-        waitForRender(viewRef.get());
-        waitForControllerFieldNotNull(controllerRef.get(), "currentBaseMapSelection");
-        waitForControllerFieldNotNull(controllerRef.get(), "latestBaseMapImage");
-        closeStage(stageRef.get());
-
-        if (errorRef.get() != null) {
-            throw new AssertionError(errorRef.get());
-        }
-        assertFalse(viewRef.get().getOverlayLabel().isVisible());
-        assertTrue(viewRef.get().getStatusLabel().getText().contains("已渲染")
-            || viewRef.get().getStatusLabel().getText().contains("底图"));
     }
 
     @Test
@@ -1519,15 +1465,6 @@ class MainControllerLoadFileTest {
             }
         });
         assertTrue(pollLatch.await(2, TimeUnit.SECONDS), "FX thread did not respond while reading status.");
-    }
-
-    private static BufferedImage solidTile(Color color) {
-        BufferedImage image = new BufferedImage(256, 256, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D graphics = image.createGraphics();
-        graphics.setColor(color);
-        graphics.fillRect(0, 0, 256, 256);
-        graphics.dispose();
-        return image;
     }
 
     private static void clickFirstTriangleCentroid(MainController controller, MainView view, AtomicReference<Throwable> errorRef) throws Exception {
