@@ -2034,14 +2034,7 @@ public final class MainController {
         if (latestBaseMapImage != null) {
             canvas.getGraphicsContext2D().drawImage(latestBaseMapImage, 0, 0, canvas.getWidth(), canvas.getHeight());
         }
-        if (latestBaseMapImage != null) {
-            canvas.getGraphicsContext2D().save();
-            canvas.getGraphicsContext2D().setGlobalAlpha(0.82);
-            canvas.getGraphicsContext2D().drawImage(latestBaseImage, 0, 0, canvas.getWidth(), canvas.getHeight());
-            canvas.getGraphicsContext2D().restore();
-        } else {
-            canvas.getGraphicsContext2D().drawImage(latestBaseImage, 0, 0, canvas.getWidth(), canvas.getHeight());
-        }
+        canvas.getGraphicsContext2D().drawImage(latestBaseImage, 0, 0, canvas.getWidth(), canvas.getHeight());
 
         // 3.3 再按当前勾选状态绘制流线亮带、本体、波场箭头和海岸线。
         if (view.getFlowLineCheck().isSelected() && latestFlowOverlayFrame != null) {

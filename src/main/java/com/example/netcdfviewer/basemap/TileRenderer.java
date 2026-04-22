@@ -7,21 +7,14 @@ import java.awt.AlphaComposite;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
-import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
 public final class TileRenderer {
     private static final Logger logger = Logger.getLogger(TileRenderer.class.getName());
     private final TileClient tileClient;
-    private final long renderTimeoutMillis;
 
     public TileRenderer(TileClient tileClient) {
-        this(tileClient, 1200L);
-    }
-
-    public TileRenderer(TileClient tileClient, long renderTimeoutMillis) {
         this.tileClient = tileClient;
-        this.renderTimeoutMillis = Math.max(0L, renderTimeoutMillis);
     }
 
     /*
@@ -66,18 +59,13 @@ public final class TileRenderer {
         Graphics2D graphics = output.createGraphics();
         graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
         int zoom = TileMath.chooseZoom(snapshot.scale(), 0, 18);
-        long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(renderTimeoutMillis);
-        boolean timedOut = false;
         for (BaseMapLayer layer : selection.definition().layers()) {
-            if (drawLayer(graphics, layer, snapshot, width, height, zoom, deadlineNanos)) {
-                timedOut = true;
-                break;
-            }
+            drawLayer(graphics, layer, snapshot, width, height, zoom);
         }
         graphics.dispose();
 
         logger.info(() -> "在线底图渲染结束, rendered=true, zoom=" + zoom);
-        return new BaseMapRenderResult(output, timedOut ? "底图加载超时，已跳过部分瓦片。" : null);
+        return new BaseMapRenderResult(output, null);
     }
 
     /*
@@ -88,15 +76,7 @@ public final class TileRenderer {
      *   1) 将屏幕视口转换为瓦片编号范围
      *   2) 逐张读取瓦片并贴到离屏图像
      */
-    private boolean drawLayer(
-        Graphics2D graphics,
-        BaseMapLayer layer,
-        ViewportState.Snapshot snapshot,
-        int width,
-        int height,
-        int zoom,
-        long deadlineNanos
-    ) {
+    private void drawLayer(Graphics2D graphics, BaseMapLayer layer, ViewportState.Snapshot snapshot, int width, int height, int zoom) {
         // 2.1 将当前屏幕边界换算为 Web Mercator 全局像素。
         TileMath.GlobalPixel topLeft = TileMath.lonLatToGlobalPixel(snapshot.worldX(0.0), snapshot.worldY(0.0), zoom);
         TileMath.GlobalPixel bottomRight = TileMath.lonLatToGlobalPixel(snapshot.worldX(width), snapshot.worldY(height), zoom);
@@ -111,10 +91,6 @@ public final class TileRenderer {
         graphics.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) layer.opacity()));
         for (int tileX = minX; tileX <= maxX; tileX++) {
             for (int tileY = minY; tileY <= maxY; tileY++) {
-                if (System.nanoTime() >= deadlineNanos) {
-                    graphics.setComposite(AlphaComposite.SrcOver);
-                    return true;
-                }
                 TileAddress address = new TileAddress(zoom, tileX, tileY);
                 BufferedImage tile = tileClient.fetch(TileUrlTemplate.expand(layer, address));
                 if (tile == null) {
@@ -128,6 +104,5 @@ public final class TileRenderer {
 
         // 2.3 恢复默认合成模式，避免影响后续图层。
         graphics.setComposite(AlphaComposite.SrcOver);
-        return false;
     }
 }

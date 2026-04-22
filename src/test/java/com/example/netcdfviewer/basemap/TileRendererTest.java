@@ -10,7 +10,6 @@ import java.awt.image.BufferedImage;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
@@ -67,31 +66,6 @@ class TileRendererTest {
 
         assertNotNull(result.image());
         assertEquals(Color.BLUE.getRGB(), result.image().getRGB(80, 60));
-    }
-
-    @Test
-    void renderReturnsQuicklyWhenTileClientIsSlow() {
-        TileRenderer renderer = new TileRenderer(url -> {
-            try {
-                Thread.sleep(250);
-            } catch (InterruptedException exception) {
-                Thread.currentThread().interrupt();
-            }
-            return solid(Color.BLUE);
-        }, 100);
-
-        long startedAt = System.nanoTime();
-        BaseMapRenderResult result = renderer.render(
-            new BaseMapSelection(BaseMapPreset.OSM.create("")),
-            domain(110.0, 112.0, 20.0, 22.0),
-            new ViewportState.Snapshot(100.0, -11000.0, 2200.0),
-            160,
-            120
-        );
-        long elapsedMillis = (System.nanoTime() - startedAt) / 1_000_000L;
-
-        assertTrue(elapsedMillis < 800, "slow tiles should not block render for too long");
-        assertTrue(result.message() == null || result.message().contains("超时"));
     }
 
     private static SpatialDomain domain(double minX, double maxX, double minY, double maxY) {
