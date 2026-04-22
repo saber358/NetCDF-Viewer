@@ -19,6 +19,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MainViewLayoutStabilityTest {
@@ -26,6 +27,17 @@ class MainViewLayoutStabilityTest {
     static void initToolkit() {
         new JFXPanel();
         Platform.setImplicitExit(false);
+    }
+
+    @Test
+    void mainViewExposesBasemapMenuItems() {
+        MainView view = new MainView();
+
+        assertEquals("底图", view.getBaseMapMenu().getText());
+        assertEquals("无底图", view.getNoBaseMapMenuItem().getText());
+        assertEquals("OpenStreetMap 标准图", view.getOsmBaseMapMenuItem().getText());
+        assertEquals("天地图矢量图", view.getTiandituVectorBaseMapMenuItem().getText());
+        assertEquals("自定义底图...", view.getCustomBaseMapMenuItem().getText());
     }
 
     @Test

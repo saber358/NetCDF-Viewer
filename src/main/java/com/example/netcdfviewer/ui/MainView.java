@@ -34,6 +34,8 @@ import javafx.scene.layout.VBox;
  * 该类专门负责创建和组织界面控件，不直接处理业务逻辑。
  */
 public final class MainView extends BorderPane {
+    // 底图菜单。
+    private final Menu baseMapMenu = new Menu("底图");
     // 帮助菜单。
     private final Menu helpMenu = new Menu("帮助");
     // 打开文件菜单项。
@@ -44,6 +46,20 @@ public final class MainView extends BorderPane {
     private final MenuItem useBuiltInCoastlineMenuItem = new MenuItem("使用内置海岸线");
     // 清空海岸线菜单项。
     private final MenuItem clearCoastlineMenuItem = new MenuItem("清除海岸线");
+    // 无底图菜单项。
+    private final MenuItem noBaseMapMenuItem = new MenuItem("无底图");
+    // OSM 底图菜单项。
+    private final MenuItem osmBaseMapMenuItem = new MenuItem("OpenStreetMap 标准图");
+    // 天地图矢量底图菜单项。
+    private final MenuItem tiandituVectorBaseMapMenuItem = new MenuItem("天地图矢量图");
+    // 天地图影像底图菜单项。
+    private final MenuItem tiandituImageBaseMapMenuItem = new MenuItem("天地图影像图");
+    // 天地图地形底图菜单项。
+    private final MenuItem tiandituTerrainBaseMapMenuItem = new MenuItem("天地图地形图");
+    // 自定义底图菜单项。
+    private final MenuItem customBaseMapMenuItem = new MenuItem("自定义底图...");
+    // 清除自定义底图参数菜单项。
+    private final MenuItem clearCustomBaseMapMenuItem = new MenuItem("清除自定义底图参数");
     // 导出 PNG 菜单项。
     private final MenuItem exportPngMenuItem = new MenuItem("导出 PNG...");
     // 退出菜单项。
@@ -137,10 +153,20 @@ public final class MainView extends BorderPane {
         // 创建文件菜单并挂载常用文件操作。
         Menu fileMenu = new Menu("文件");
         fileMenu.getItems().addAll(openMenuItem, loadCoastlineMenuItem, useBuiltInCoastlineMenuItem, clearCoastlineMenuItem, exportPngMenuItem, exitMenuItem);
+        // 创建底图菜单并挂载在线底图操作。
+        baseMapMenu.getItems().addAll(
+            noBaseMapMenuItem,
+            osmBaseMapMenuItem,
+            tiandituVectorBaseMapMenuItem,
+            tiandituImageBaseMapMenuItem,
+            tiandituTerrainBaseMapMenuItem,
+            customBaseMapMenuItem,
+            clearCustomBaseMapMenuItem
+        );
         // 将关于菜单项加入帮助菜单。
         helpMenu.getItems().add(aboutMenuItem);
-        // 顶部菜单栏同时显示文件菜单和帮助菜单。
-        MenuBar menuBar = new MenuBar(fileMenu, helpMenu);
+        // 顶部菜单栏同时显示文件、底图和帮助菜单。
+        MenuBar menuBar = new MenuBar(fileMenu, baseMapMenu, helpMenu);
 
         // 顶部工具栏提供打开、导出和重置视图等快捷操作。
         ToolBar toolBar = new ToolBar(openButton, exportButton, resetViewButton, new Separator(), datasetLabel);
@@ -297,6 +323,38 @@ public final class MainView extends BorderPane {
 
     public MenuItem getExportPngMenuItem() {
         return exportPngMenuItem;
+    }
+
+    public Menu getBaseMapMenu() {
+        return baseMapMenu;
+    }
+
+    public MenuItem getNoBaseMapMenuItem() {
+        return noBaseMapMenuItem;
+    }
+
+    public MenuItem getOsmBaseMapMenuItem() {
+        return osmBaseMapMenuItem;
+    }
+
+    public MenuItem getTiandituVectorBaseMapMenuItem() {
+        return tiandituVectorBaseMapMenuItem;
+    }
+
+    public MenuItem getTiandituImageBaseMapMenuItem() {
+        return tiandituImageBaseMapMenuItem;
+    }
+
+    public MenuItem getTiandituTerrainBaseMapMenuItem() {
+        return tiandituTerrainBaseMapMenuItem;
+    }
+
+    public MenuItem getCustomBaseMapMenuItem() {
+        return customBaseMapMenuItem;
+    }
+
+    public MenuItem getClearCustomBaseMapMenuItem() {
+        return clearCustomBaseMapMenuItem;
     }
 
     public MenuItem getLoadCoastlineMenuItem() {
