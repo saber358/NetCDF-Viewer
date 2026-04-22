@@ -8,6 +8,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.logging.Logger;
 
 @FunctionalInterface
@@ -21,9 +23,12 @@ public interface TileClient {
     final class HttpTileClient implements TileClient {
         private static final Logger logger = Logger.getLogger(HttpTileClient.class.getName());
         private final TileCache cache;
-        private final HttpClient client = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .build();
+        private final ExecutorService executor = Executors.newCachedThreadPool(runnable -> {
+            Thread thread = new Thread(runnable, "tile-http-" + System.nanoTime());
+            thread.setDaemon(true);
+            return thread;
+        });
+        private HttpClient client;
 
         private HttpTileClient(TileCache cache) {
             this.cache = cache;
@@ -56,7 +61,7 @@ public interface TileClient {
                     .header("User-Agent", "NetCDFViewer/1.1")
                     .GET()
                     .build();
-                HttpResponse<byte[]> response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+                HttpResponse<byte[]> response = client().send(request, HttpResponse.BodyHandlers.ofByteArray());
                 if (response.statusCode() < 200 || response.statusCode() >= 300) {
                     logger.info(() -> "在线瓦片获取完成, source=network, status=" + response.statusCode());
                     return null;
@@ -73,6 +78,16 @@ public interface TileClient {
                 logger.info(() -> "在线瓦片获取完成, source=error, reason=" + exception.getMessage());
                 return null;
             }
+        }
+
+        private synchronized HttpClient client() {
+            if (client == null) {
+                client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(5))
+                    .executor(executor)
+                    .build();
+            }
+            return client;
         }
     }
 }
