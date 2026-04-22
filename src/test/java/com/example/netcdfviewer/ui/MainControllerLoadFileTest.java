@@ -8,6 +8,8 @@ import com.example.netcdfviewer.testsupport.SampleDatasetPaths;
 import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
 import javafx.scene.Scene;
+import javafx.scene.SnapshotParameters;
+import javafx.scene.image.WritableImage;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.input.ScrollEvent;
@@ -193,6 +195,78 @@ class MainControllerLoadFileTest {
         assertFalse(viewRef.get().getOverlayLabel().isVisible());
         assertTrue(viewRef.get().getStatusLabel().getText().contains("已渲染")
             || viewRef.get().getStatusLabel().getText().contains("底图"));
+    }
+
+    @Test
+    void basemapRemainsVisibleUnderScalarLayer() throws Exception {
+        CountDownLatch initLatch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+        AtomicReference<MainController> controllerRef = new AtomicReference<>();
+        AtomicReference<MainView> viewRef = new AtomicReference<>();
+        AtomicReference<Stage> stageRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                Stage stage = new Stage();
+                MainView view = new MainView();
+                MainController controller = new MainController(stage, view, new TileRenderer(url -> solidTile(java.awt.Color.BLUE)));
+                controller.initialize();
+                stage.setScene(new Scene(view, 1440, 900));
+                stage.show();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("XTPY-wrf.nc"));
+
+                controllerRef.set(controller);
+                viewRef.set(view);
+                stageRef.set(stage);
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                initLatch.countDown();
+            }
+        });
+
+        assertTrue(initLatch.await(10, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+
+        waitForRender(viewRef.get());
+
+        CountDownLatch drawLatch = new CountDownLatch(1);
+        AtomicReference<Integer> argbRef = new AtomicReference<>();
+        Platform.runLater(() -> {
+            try {
+                setControllerField(controllerRef.get(), "latestBaseMapImage", solidFxImage(javafx.scene.paint.Color.BLUE, 32, 32));
+                setControllerField(controllerRef.get(), "latestBaseImage", solidFxImage(javafx.scene.paint.Color.RED, 32, 32));
+
+                Method drawLatestFrame = MainController.class.getDeclaredMethod("drawLatestFrame", boolean.class);
+                drawLatestFrame.setAccessible(true);
+                drawLatestFrame.invoke(controllerRef.get(), false);
+
+                WritableImage snapshot = viewRef.get().getRenderCanvas().snapshot(new SnapshotParameters(), null);
+                int x = Math.max(1, (int) Math.round(snapshot.getWidth() / 2.0));
+                int y = Math.max(1, (int) Math.round(snapshot.getHeight() / 2.0));
+                argbRef.set(snapshot.getPixelReader().getArgb(x, y));
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                drawLatch.countDown();
+            }
+        });
+
+        assertTrue(drawLatch.await(5, TimeUnit.SECONDS));
+        closeStage(stageRef.get());
+
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+
+        int argb = argbRef.get();
+        int blue = argb & 0xFF;
+        assertTrue(blue > 0, "scalar layer should keep some basemap visibility");
     }
 
     @Test
@@ -1521,12 +1595,28 @@ class MainControllerLoadFileTest {
         assertTrue(pollLatch.await(2, TimeUnit.SECONDS), "FX thread did not respond while reading status.");
     }
 
+    private static void setControllerField(MainController controller, String fieldName, Object value) throws Exception {
+        Field field = MainController.class.getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(controller, value);
+    }
+
     private static BufferedImage solidTile(Color color) {
         BufferedImage image = new BufferedImage(256, 256, BufferedImage.TYPE_INT_ARGB);
         Graphics2D graphics = image.createGraphics();
         graphics.setColor(color);
         graphics.fillRect(0, 0, 256, 256);
         graphics.dispose();
+        return image;
+    }
+
+    private static WritableImage solidFxImage(javafx.scene.paint.Color color, int width, int height) {
+        WritableImage image = new WritableImage(width, height);
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                image.getPixelWriter().setColor(x, y, color);
+            }
+        }
         return image;
     }
 

@@ -57,7 +57,7 @@ public interface TileClient {
 
                 // 1.2 缓存未命中时发起 HTTP 请求。
                 HttpRequest request = HttpRequest.newBuilder(URI.create(url))
-                    .timeout(Duration.ofSeconds(8))
+                    .timeout(Duration.ofMillis(1000))
                     .header("User-Agent", "NetCDFViewer/1.1")
                     .GET()
                     .build();
@@ -83,7 +83,7 @@ public interface TileClient {
         private synchronized HttpClient client() {
             if (client == null) {
                 client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(5))
+                    .connectTimeout(Duration.ofMillis(800))
                     .executor(executor)
                     .build();
             }
