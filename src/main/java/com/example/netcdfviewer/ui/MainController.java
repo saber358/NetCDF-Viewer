@@ -50,7 +50,6 @@ import javafx.scene.canvas.Canvas;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.SelectionMode;
-import javafx.scene.control.TextInputDialog;
 import javafx.scene.image.WritableImage;
 import javafx.scene.input.Dragboard;
 import javafx.scene.input.KeyCombination;
@@ -533,8 +532,7 @@ public final class MainController {
         logger.info(() -> "开始选择内置底图, preset=" + preset.name());
 
         // 2.1 按预置名称生成当前底图定义。
-        String token = preset == BaseMapPreset.OSM ? "" : promptBaseMapToken(preset.displayName());
-        currentBaseMapSelection = new BaseMapSelection(preset.create(token));
+        currentBaseMapSelection = new BaseMapSelection(preset.create(""));
         latestBaseMapImage = null;
 
         // 2.2 更新状态栏并触发重绘。
@@ -607,15 +605,6 @@ public final class MainController {
             return;
         }
         redrawCurrentView();
-    }
-
-    private String promptBaseMapToken(String title) {
-        TextInputDialog dialog = new TextInputDialog();
-        dialog.initOwner(stage);
-        dialog.setTitle(title);
-        dialog.setHeaderText(title);
-        dialog.setContentText("请输入天地图 token：");
-        return dialog.showAndWait().map(String::trim).orElse("");
     }
 
     private void loadFile(Path path) {
