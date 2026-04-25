@@ -100,4 +100,37 @@ class StructuredGridImageRendererTest {
             }
         }
     }
+
+    @Test
+    void renderCanUseTransparentBackgroundForBasemapComposition() {
+        StructuredGridDomain domain = new StructuredGridDomain(
+            new StructuredGridData(
+                new CoordinateBinding("binding:lon:lat", "lon", "lat", List.of("x", "y"), false),
+                new double[]{0.0, 1.0},
+                new double[]{0.0, 1.0},
+                null,
+                null,
+                2,
+                2
+            ),
+            new CoordinateBinding("binding:lon:lat", "lon", "lat", List.of("x", "y"), false)
+        );
+        ViewportState.Snapshot snapshot = new ViewportState.Snapshot(50.0, 20.0, 80.0);
+
+        BufferedImage image = renderer.render(
+            160,
+            120,
+            domain,
+            new double[]{1.0, 2.0, 3.0, 4.0},
+            ColorMaps.viridis(),
+            new RangeStats(1.0, 4.0, 4),
+            snapshot,
+            false,
+            null,
+            null,
+            0x00000000
+        );
+
+        assertEquals(0, (image.getRGB(150, 110) >>> 24) & 0xFF);
+    }
 }

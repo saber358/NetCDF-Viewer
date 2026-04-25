@@ -53,7 +53,35 @@ public final class StructuredGridImageRenderer {
             snapshot,
             cellCentered,
             fillValue,
-            ForkJoinPool.commonPool()
+            ForkJoinPool.commonPool(),
+            BACKGROUND_ARGB
+        );
+    }
+
+    public BufferedImage render(
+        int width,
+        int height,
+        StructuredGridDomain domain,
+        double[] values,
+        ColorMap colorMap,
+        RangeStats rangeStats,
+        ViewportState.Snapshot snapshot,
+        boolean cellCentered,
+        Double fillValue,
+        int backgroundArgb
+    ) {
+        return render(
+            width,
+            height,
+            domain,
+            values,
+            colorMap,
+            rangeStats,
+            snapshot,
+            cellCentered,
+            fillValue,
+            ForkJoinPool.commonPool(),
+            backgroundArgb
         );
     }
 
@@ -80,6 +108,34 @@ public final class StructuredGridImageRenderer {
         Double fillValue,
         Executor renderExecutor
     ) {
+        return render(
+            width,
+            height,
+            domain,
+            values,
+            colorMap,
+            rangeStats,
+            snapshot,
+            cellCentered,
+            fillValue,
+            renderExecutor,
+            BACKGROUND_ARGB
+        );
+    }
+
+    public BufferedImage render(
+        int width,
+        int height,
+        StructuredGridDomain domain,
+        double[] values,
+        ColorMap colorMap,
+        RangeStats rangeStats,
+        ViewportState.Snapshot snapshot,
+        boolean cellCentered,
+        Double fillValue,
+        Executor renderExecutor,
+        int backgroundArgb
+    ) {
         return renderInternal(
             width,
             height,
@@ -91,7 +147,8 @@ public final class StructuredGridImageRenderer {
             cellCentered,
             fillValue,
             renderExecutor,
-            true
+            true,
+            backgroundArgb
         );
     }
 
@@ -127,7 +184,8 @@ public final class StructuredGridImageRenderer {
             cellCentered,
             fillValue,
             null,
-            false
+            false,
+            BACKGROUND_ARGB
         );
     }
 
@@ -153,7 +211,8 @@ public final class StructuredGridImageRenderer {
         boolean cellCentered,
         Double fillValue,
         Executor renderExecutor,
-        boolean parallel
+        boolean parallel,
+        int backgroundArgb
     ) {
         logger.info(() -> "开始渲染规则格网底图, width="
             + width
@@ -162,10 +221,10 @@ public final class StructuredGridImageRenderer {
             + ", parallel="
             + parallel);
 
-        // 4.1 先创建目标图像并填充统一背景色。
+        // 4.1 先创建目标图像并填充调用方指定背景色。
         BufferedImage image = new BufferedImage(Math.max(1, width), Math.max(1, height), BufferedImage.TYPE_INT_ARGB);
         int[] pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
-        Arrays.fill(pixels, BACKGROUND_ARGB);
+        Arrays.fill(pixels, backgroundArgb);
 
         // 4.2 输入无效或范围为空时直接返回背景图。
         if (domain == null || rangeStats == null || rangeStats.empty()) {

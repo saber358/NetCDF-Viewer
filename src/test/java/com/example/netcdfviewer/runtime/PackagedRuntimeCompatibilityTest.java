@@ -55,6 +55,7 @@ class PackagedRuntimeCompatibilityTest {
         assertTrue(script.contains("--vendor lwj"));
         assertTrue(script.contains("--icon"));
         assertTrue(script.contains("app-icon.ico"));
+        assertTrue(script.contains("java.net.http"));
         assertFalse(script.contains("1.0.2"));
     }
 
@@ -80,7 +81,7 @@ class PackagedRuntimeCompatibilityTest {
         command[1] = "--module-path";
         command[2] = javafxModulePath;
         command[3] = "--limit-modules";
-        command[4] = "java.base,java.compiler,java.datatransfer,java.desktop,java.logging,java.naming,java.prefs,java.security.jgss,java.xml,javafx.base,javafx.graphics,javafx.controls,javafx.swing,jdk.jfr,jdk.unsupported,jdk.unsupported.desktop";
+        command[4] = "java.base,java.compiler,java.datatransfer,java.desktop,java.logging,java.naming,java.net.http,java.prefs,java.security.jgss,java.xml,javafx.base,javafx.graphics,javafx.controls,javafx.swing,jdk.jfr,jdk.unsupported,jdk.unsupported.desktop";
         command[5] = "-cp";
         command[6] = classpath;
         command[7] = mainClass;

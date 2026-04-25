@@ -1,6 +1,9 @@
 package com.example.netcdfviewer.ui;
 
 import com.example.netcdfviewer.AppMetadata;
+import com.example.netcdfviewer.basemap.BasemapLayer;
+import com.example.netcdfviewer.basemap.BasemapRenderer;
+import com.example.netcdfviewer.basemap.HttpBasemapTileProvider;
 import com.example.netcdfviewer.io.NetcdfDatasetParser;
 import com.example.netcdfviewer.io.ParsedDataset;
 import com.example.netcdfviewer.model.CoordinateBinding;
@@ -43,6 +46,7 @@ import javafx.scene.canvas.Canvas;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.SelectionMode;
+import javafx.scene.control.TextInputDialog;
 import javafx.scene.image.WritableImage;
 import javafx.scene.input.Dragboard;
 import javafx.scene.input.KeyCombination;
@@ -51,6 +55,8 @@ import javafx.scene.input.TransferMode;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 
+import java.awt.Color;
+import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -103,10 +109,14 @@ public final class MainController {
     private final WindBarbOverlayRenderer windBarbOverlayRenderer = new WindBarbOverlayRenderer();
     // 海岸线叠加绘制器。
     private final CoastlineOverlayRenderer coastlineOverlayRenderer = new CoastlineOverlayRenderer();
+    // 底图瓦片渲染器。
+    private final BasemapRenderer basemapRenderer = new BasemapRenderer(new HttpBasemapTileProvider(defaultBasemapCacheDirectory()));
     // 当前视口状态，包含缩放和平移信息。
     private final ViewportState viewportState = new ViewportState();
     // 可用颜色表集合。
     private final Map<String, ColorMap> colorMaps = new LinkedHashMap<>();
+    // 可用底图集合。
+    private final Map<String, BasemapLayer> basemapLayers = new LinkedHashMap<>();
     // 每个数据集记住的结构化坐标绑定选择。
     private final Map<Path, String> preferredCoordinateBindingIds = new LinkedHashMap<>();
     // 已加载数据集集合。
@@ -185,6 +195,8 @@ public final class MainController {
     );
     // 是否正在内部刷新坐标控件。
     private boolean updatingCoordinateControls;
+    // 是否正在内部刷新底图控件。
+    private boolean updatingBasemapControls;
     // 判定点击与拖拽的像素阈值。
     private static final double CLICK_TOLERANCE = 4.0;
 
@@ -199,6 +211,8 @@ public final class MainController {
         colorMaps.put("Viridis", ColorMaps.viridis());
         colorMaps.put("Jet", ColorMaps.jet());
         colorMaps.put("Greys", ColorMaps.greys());
+        // 注册内置底图。
+        configureBasemapControls();
 
         // 初始化颜色表下拉框。
         view.getColorMapCombo().setItems(FXCollections.observableArrayList(colorMaps.keySet()));
@@ -243,6 +257,31 @@ public final class MainController {
         wireMouseNavigation();
         // 绑定拖拽打开文件事件。
         wireDragAndDrop();
+    }
+
+    /*
+     * ========================================================================
+     * 步骤1：初始化底图控件
+     * ========================================================================
+     * 目标：
+     *   1) 注册内置 OpenStreetMap 标准底图
+     *   2) 将底图下拉框与控制器状态接线
+     */
+    private void configureBasemapControls() {
+        logger.info("开始初始化底图控件...");
+
+        // 1.1 注册内置底图来源。
+        BasemapLayer openStreetMapLayer = BasemapLayer.openStreetMapStandard();
+        basemapLayers.put(openStreetMapLayer.name(), openStreetMapLayer);
+
+        // 1.2 初始化底图下拉选项。
+        updatingBasemapControls = true;
+        view.getBasemapCombo().setItems(FXCollections.observableArrayList("无底图", openStreetMapLayer.name()));
+        view.getBasemapCombo().getSelectionModel().select("无底图");
+        view.getBasemapCheck().setSelected(false);
+        updatingBasemapControls = false;
+
+        logger.info("底图控件初始化完成。");
     }
 
     private void bindCanvasSize() {
@@ -340,9 +379,171 @@ public final class MainController {
         });
         // 手动应用范围时重新渲染。
         view.getApplyRangeButton().setOnAction(event -> renderCurrentSelection());
+        // 底图开关变化时重绘当前视图。
+        view.getBasemapCheck().selectedProperty().addListener((obs, oldValue, newValue) -> handleBasemapEnabledChanged(newValue));
+        // 底图来源变化时同步开关状态并重绘。
+        view.getBasemapCombo().valueProperty().addListener((obs, oldValue, newValue) -> handleBasemapSelectionChanged(newValue));
+        // 底图透明度变化时重绘当前视图。
+        view.getBasemapOpacitySlider().valueProperty().addListener((obs, oldValue, newValue) -> renderCurrentSelection());
+        // 自定义底图按钮打开 XYZ 模板输入框。
+        view.getCustomBasemapButton().setOnAction(event -> openCustomBasemapDialog());
         // 结构化网格坐标选择变化时切换活动坐标域并重绘。
         view.getCoordinateXCombo().valueProperty().addListener((obs, oldValue, newValue) -> handleCoordinateSelectionChanged(true));
         view.getCoordinateYCombo().valueProperty().addListener((obs, oldValue, newValue) -> handleCoordinateSelectionChanged(false));
+    }
+
+    /*
+     * ========================================================================
+     * 步骤2：处理底图开关变化
+     * ========================================================================
+     * 目标：
+     *   1) 开启底图时自动选择默认底图
+     *   2) 关闭底图时保持下拉选择但不参与渲染
+     */
+    private void handleBasemapEnabledChanged(boolean enabled) {
+        logger.info(() -> "开始处理底图开关变化, enabled=" + enabled);
+
+        // 2.1 内部刷新期间不触发重复渲染。
+        if (updatingBasemapControls) {
+            logger.info("底图开关变化处理结束, skipped=true");
+            return;
+        }
+
+        // 2.2 开启底图且当前没有具体来源时，默认选择 OSM 标准地图。
+        if (enabled && "无底图".equals(view.getBasemapCombo().getValue())) {
+            updatingBasemapControls = true;
+            view.getBasemapCombo().getSelectionModel().select("OpenStreetMap 标准地图");
+            updatingBasemapControls = false;
+        }
+
+        // 2.3 按最新状态重绘当前视图。
+        renderCurrentSelection();
+
+        logger.info("底图开关变化处理结束。");
+    }
+
+    /*
+     * ========================================================================
+     * 步骤3：处理底图来源变化
+     * ========================================================================
+     * 目标：
+     *   1) 选择无底图时关闭底图开关
+     *   2) 选择具体底图时自动开启底图开关
+     */
+    private void handleBasemapSelectionChanged(String selectedName) {
+        logger.info(() -> "开始处理底图来源变化, selectedName=" + selectedName);
+
+        // 3.1 内部刷新期间不触发重复渲染。
+        if (updatingBasemapControls) {
+            logger.info("底图来源变化处理结束, skipped=true");
+            return;
+        }
+
+        // 3.2 同步底图开关状态。
+        updatingBasemapControls = true;
+        view.getBasemapCheck().setSelected(selectedName != null && basemapLayers.containsKey(selectedName));
+        updatingBasemapControls = false;
+
+        // 3.3 按最新状态重绘当前视图。
+        renderCurrentSelection();
+
+        logger.info("底图来源变化处理结束。");
+    }
+
+    /*
+     * ========================================================================
+     * 步骤4：打开自定义底图输入框
+     * ========================================================================
+     * 目标：
+     *   1) 读取用户输入的 XYZ URL 模板
+     *   2) 校验通过后加入底图列表并立即启用
+     */
+    private void openCustomBasemapDialog() {
+        logger.info("开始打开自定义底图输入框...");
+
+        // 4.1 创建并显示 URL 模板输入框。
+        TextInputDialog dialog = new TextInputDialog("https://example.com/tiles/{z}/{x}/{y}.png");
+        dialog.setTitle("自定义 XYZ 底图");
+        dialog.setHeaderText("输入 XYZ 瓦片 URL 模板");
+        dialog.setContentText("URL 模板：");
+        Optional<String> result = dialog.showAndWait();
+        if (result.isEmpty()) {
+            setStatus("已取消自定义底图。");
+            logger.info("自定义底图输入框关闭, cancelled=true");
+            return;
+        }
+
+        try {
+            // 4.2 校验并注册自定义底图。
+            BasemapLayer customLayer = BasemapLayer.custom("自定义底图", result.orElseThrow());
+            basemapLayers.put(customLayer.name(), customLayer);
+            updatingBasemapControls = true;
+            if (!view.getBasemapCombo().getItems().contains(customLayer.name())) {
+                view.getBasemapCombo().getItems().add(customLayer.name());
+            }
+            view.getBasemapCombo().getSelectionModel().select(customLayer.name());
+            view.getBasemapCheck().setSelected(true);
+            updatingBasemapControls = false;
+
+            // 4.3 立即触发重绘。
+            setStatus("已启用自定义底图。");
+            renderCurrentSelection();
+            logger.info("自定义底图启用完成。");
+        } catch (IllegalArgumentException exception) {
+            showError("自定义底图无效", exception.getMessage());
+            logger.info(() -> "自定义底图启用失败, reason=" + exception.getMessage());
+        }
+    }
+
+    /*
+     * ========================================================================
+     * 步骤5：解析当前底图选择
+     * ========================================================================
+     * 目标：
+     *   1) 只在用户启用底图时返回图层
+     *   2) 将无底图和未知名称统一视为不绘制底图
+     */
+    private BasemapLayer selectedBasemapLayer() {
+        logger.info("开始解析当前底图选择...");
+
+        // 5.1 底图开关关闭时不绘制底图。
+        if (!view.getBasemapCheck().isSelected()) {
+            logger.info("底图选择解析完成, selected=false");
+            return null;
+        }
+
+        // 5.2 按下拉框名称查找底图定义。
+        BasemapLayer layer = basemapLayers.get(view.getBasemapCombo().getValue());
+
+        logger.info(() -> "底图选择解析完成, selected=" + (layer != null));
+        return layer;
+    }
+
+    /*
+     * ========================================================================
+     * 步骤6：判断空间域是否可叠加在线底图
+     * ========================================================================
+     * 目标：
+     *   1) 第一版仅支持经纬度坐标数据
+     *   2) 防止投影坐标误套 Web Mercator 瓦片
+     */
+    private boolean isGeographicDomain(SpatialDomain spatialDomain) {
+        logger.info("开始判断空间域是否为经纬度...");
+
+        // 6.1 空空间域不能叠加底图。
+        if (spatialDomain == null) {
+            logger.info("空间域经纬度判断完成, geographic=false");
+            return false;
+        }
+
+        // 6.2 用世界坐标范围判断是否落在经纬度边界内。
+        boolean geographic = spatialDomain.minX() >= -180.000001
+            && spatialDomain.maxX() <= 180.000001
+            && spatialDomain.minY() >= -90.000001
+            && spatialDomain.maxY() <= 90.000001;
+
+        logger.info(() -> "空间域经纬度判断完成, geographic=" + geographic);
+        return geographic;
     }
 
     private void wireMouseNavigation() {
@@ -1281,6 +1482,10 @@ public final class MainController {
             VelocityVariablePair flowPair = view.getFlowLineCheck().isSelected() ? activeVelocityPair : null;
             // 在当前状态下决定是否启用风羽叠加层。
             WindVariablePair windPair = view.getWindBarbCheck().isSelected() ? activeWindPair : null;
+            // 在当前状态下决定是否启用底图。
+            BasemapLayer basemapLayer = selectedBasemapLayer();
+            // 读取底图透明度。
+            double basemapOpacity = view.getBasemapOpacitySlider().getValue();
             // 确保视口已适配当前网格范围。
             viewportState.ensureFitted(activeSpatialDomain, canvas.getWidth(), canvas.getHeight());
             // 生成新的渲染序号，供后台任务结果校验使用。
@@ -1323,7 +1528,7 @@ public final class MainController {
             pendingRenderInputSequence = inputSequence;
             pendingKeepCurrentFrameVisible = keepCurrentFrameVisible;
             // 在后台线程中执行真正的图像渲染。
-            renderAsync(requestId, layerIndex, values, colorMap, displayRange, wavePair, flowPair, windPair);
+            renderAsync(requestId, layerIndex, values, colorMap, displayRange, wavePair, flowPair, windPair, basemapLayer, basemapOpacity);
         } catch (Exception exception) {
             // 渲染准备阶段异常时，直接退回占位提示。
             renderPlaceholder("无法渲染当前变量：" + exception.getMessage());
@@ -1338,7 +1543,9 @@ public final class MainController {
         RangeStats displayRange,
         WaveVariablePair wavePair,
         VelocityVariablePair flowPair,
-        WindVariablePair windPair
+        WindVariablePair windPair,
+        BasemapLayer basemapLayer,
+        double basemapOpacity
     ) {
         // 快照当前画布与状态，避免后台线程期间界面对象变化。
         Canvas canvas = view.getRenderCanvas();
@@ -1350,6 +1557,10 @@ public final class MainController {
         ViewportState.Snapshot snapshot = viewportState.snapshot();
         long inputSequence = pendingRenderInputSequence;
         boolean keepCurrentFrameVisible = pendingKeepCurrentFrameVisible;
+        String basemapMessage = basemapLayer != null && !isGeographicDomain(spatialDomain)
+            ? "已跳过底图：当前数据坐标不是经纬度。"
+            : null;
+        BasemapLayer renderBasemapLayer = basemapMessage == null ? basemapLayer : null;
 
         /*
          * ========================================================================
@@ -1376,7 +1587,9 @@ public final class MainController {
                         displayRange,
                         snapshot,
                         width,
-                        height
+                        height,
+                        renderBasemapLayer,
+                        basemapOpacity
                     ),
                     renderComputeExecutor
                 );
@@ -1412,7 +1625,7 @@ public final class MainController {
                     waveResult.frame(),
                     flowResult.frame(),
                     windResult.frame(),
-                    mergeOverlayMessages(waveResult.message(), flowResult.message(), windResult.message())
+                    mergeOverlayMessages(basemapMessage, waveResult.message(), flowResult.message(), windResult.message())
                 );
             }
         };
@@ -1512,11 +1725,16 @@ public final class MainController {
         RangeStats displayRange,
         ViewportState.Snapshot snapshot,
         int width,
-        int height
+        int height,
+        BasemapLayer basemapLayer,
+        double basemapOpacity
     ) {
         logger.info(() -> "开始构建标量底图, variable=" + variable.name());
 
-        BufferedImage image = spatialDomain.kind() == SpatialDomain.Kind.STRUCTURED_GRID
+        BufferedImage basemapImage = basemapLayer == null
+            ? null
+            : basemapRenderer.render(width, height, snapshot, basemapLayer, basemapOpacity);
+        BufferedImage scalarImage = spatialDomain.kind() == SpatialDomain.Kind.STRUCTURED_GRID
             ? structuredImageRenderer.render(
                 width,
                 height,
@@ -1526,7 +1744,8 @@ public final class MainController {
                 displayRange,
                 snapshot,
                 variable.cellCentered(),
-                variable.fillValue()
+                variable.fillValue(),
+                basemapImage == null ? 0xFFF8FBFD : 0x00000000
             )
             : imageRenderer.render(
                 width,
@@ -1537,11 +1756,46 @@ public final class MainController {
                 displayRange,
                 snapshot,
                 variable.elementCentered(),
-                variable.fillValue()
+                variable.fillValue(),
+                basemapImage == null ? Color.decode("#F8FBFD") : new Color(0, 0, 0, 0)
             );
+
+        BufferedImage image = basemapImage == null ? scalarImage : composeBasemapAndScalar(width, height, basemapImage, scalarImage);
 
         logger.info(() -> "标量底图构建结束, variable=" + variable.name());
         return image;
+    }
+
+    /*
+     * ========================================================================
+     * 步骤3：组合底图与标量图
+     * ========================================================================
+     * 目标：
+     *   1) 确保底图绘制在最下层
+     *   2) 将透明背景的 NetCDF 标量图覆盖到底图上方
+     */
+    private BufferedImage composeBasemapAndScalar(
+        int width,
+        int height,
+        BufferedImage basemapImage,
+        BufferedImage scalarImage
+    ) {
+        logger.info("开始组合底图与标量图...");
+
+        // 3.1 创建最终图像。
+        BufferedImage composedImage = new BufferedImage(Math.max(1, width), Math.max(1, height), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = composedImage.createGraphics();
+        try {
+            // 3.2 先绘制底图，再绘制 NetCDF 标量图。
+            graphics.drawImage(basemapImage, 0, 0, null);
+            graphics.drawImage(scalarImage, 0, 0, null);
+        } finally {
+            // 3.3 释放绘图上下文。
+            graphics.dispose();
+        }
+
+        logger.info("底图与标量图组合完成。");
+        return composedImage;
     }
 
     /*
@@ -2326,6 +2580,28 @@ public final class MainController {
     private String format(double value) {
         // 所有数值显示统一保留四位小数。
         return String.format(Locale.ROOT, "%.4f", value);
+    }
+
+    /*
+     * ========================================================================
+     * 步骤10：解析底图缓存目录
+     * ========================================================================
+     * 目标：
+     *   1) 将在线瓦片缓存到用户目录
+     *   2) 避免缓存文件进入项目仓库
+     */
+    private static Path defaultBasemapCacheDirectory() {
+        logger.info("开始解析底图缓存目录...");
+
+        // 10.1 使用用户主目录下的应用缓存目录。
+        Path directory = Paths.get(
+            System.getProperty("user.home", "."),
+            ".netcdf-viewer",
+            "tile-cache"
+        );
+
+        logger.info(() -> "底图缓存目录解析完成, directory=" + directory);
+        return directory;
     }
 
     /*

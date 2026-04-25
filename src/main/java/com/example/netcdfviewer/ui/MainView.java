@@ -110,6 +110,14 @@ public final class MainView extends BorderPane {
     private final CheckBox waveArrowCheck = new CheckBox("波浪箭头");
     // 风羽叠加开关。
     private final CheckBox windBarbCheck = new CheckBox("风场风羽");
+    // 底图显示开关。
+    private final CheckBox basemapCheck = new CheckBox("显示底图");
+    // 底图来源下拉框。
+    private final ComboBox<String> basemapCombo = new ComboBox<>();
+    // 底图透明度滑块。
+    private final Slider basemapOpacitySlider = new Slider(0.0, 1.0, 0.75);
+    // 自定义底图按钮。
+    private final Button customBasemapButton = new Button("自定义底图");
     // 手动最小值输入框。
     private final TextField minField = new TextField();
     // 手动最大值输入框。
@@ -225,6 +233,14 @@ public final class MainView extends BorderPane {
         flowLineCheck.setDisable(true);
         waveArrowCheck.setDisable(true);
         windBarbCheck.setDisable(true);
+        basemapCombo.getItems().addAll("无底图", "OpenStreetMap 标准地图");
+        basemapCombo.getSelectionModel().select("无底图");
+        basemapCombo.setMaxWidth(Double.MAX_VALUE);
+        basemapOpacitySlider.setBlockIncrement(0.1);
+        basemapOpacitySlider.setMajorTickUnit(0.25);
+        basemapOpacitySlider.setMinorTickCount(4);
+        basemapOpacitySlider.setShowTickMarks(true);
+        basemapOpacitySlider.setShowTickLabels(false);
         minField.setPromptText("最小值");
         maxField.setPromptText("最大值");
         // 手动范围区由最小值、最大值和应用按钮组成。
@@ -238,6 +254,12 @@ public final class MainView extends BorderPane {
             connectivityVariableLabel,
             variableMetaLabel,
             visualizeButton,
+            new Label("底图"),
+            basemapCheck,
+            basemapCombo,
+            customBasemapButton,
+            new Label("底图透明度"),
+            basemapOpacitySlider,
             flowLineCheck,
             waveArrowCheck,
             windBarbCheck,
@@ -441,6 +463,22 @@ public final class MainView extends BorderPane {
 
     public CheckBox getWindBarbCheck() {
         return windBarbCheck;
+    }
+
+    public CheckBox getBasemapCheck() {
+        return basemapCheck;
+    }
+
+    public ComboBox<String> getBasemapCombo() {
+        return basemapCombo;
+    }
+
+    public Slider getBasemapOpacitySlider() {
+        return basemapOpacitySlider;
+    }
+
+    public Button getCustomBasemapButton() {
+        return customBasemapButton;
     }
 
     public TextField getMinField() {

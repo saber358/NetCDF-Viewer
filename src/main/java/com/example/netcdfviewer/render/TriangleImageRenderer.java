@@ -23,6 +23,32 @@ public final class TriangleImageRenderer {
         boolean elementCentered,
         Double fillValue
     ) {
+        return render(
+            width,
+            height,
+            mesh,
+            values,
+            colorMap,
+            rangeStats,
+            snapshot,
+            elementCentered,
+            fillValue,
+            java.awt.Color.decode("#F8FBFD")
+        );
+    }
+
+    public BufferedImage render(
+        int width,
+        int height,
+        MeshData mesh,
+        double[] values,
+        ColorMap colorMap,
+        RangeStats rangeStats,
+        ViewportState.Snapshot snapshot,
+        boolean elementCentered,
+        Double fillValue,
+        java.awt.Color backgroundColor
+    ) {
         // 创建输出图像；宽高至少为 1，避免非法尺寸。
         BufferedImage image = new BufferedImage(Math.max(1, width), Math.max(1, height), BufferedImage.TYPE_INT_ARGB);
         // 获取图像绘图上下文。
@@ -30,9 +56,11 @@ public final class TriangleImageRenderer {
         try {
             // 关闭抗锯齿以优先保证大量三角形绘制性能。
             graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
-            // 先填充统一背景色。
-            graphics.setColor(java.awt.Color.decode("#F8FBFD"));
-            graphics.fillRect(0, 0, width, height);
+            // 先按调用方要求填充背景色；透明背景用于底图组合。
+            if (backgroundColor != null && backgroundColor.getAlpha() > 0) {
+                graphics.setColor(backgroundColor);
+                graphics.fillRect(0, 0, width, height);
+            }
 
             // 如果网格或范围无效，则直接返回背景图。
             if (mesh == null || rangeStats == null || rangeStats.empty()) {

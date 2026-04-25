@@ -148,7 +148,7 @@ jpackage \
   --main-jar '$jarName' \
   --main-class com.example.netcdfviewer.Launcher \
   --module-path '$javafxModuleDirWsl' \
-  --add-modules javafx.controls,javafx.swing,java.logging,java.naming,java.security.jgss,java.compiler,jdk.jfr,jdk.unsupported,jdk.unsupported.desktop \
+  --add-modules javafx.controls,javafx.swing,java.logging,java.naming,java.net.http,java.security.jgss,java.compiler,jdk.jfr,jdk.unsupported,jdk.unsupported.desktop \
   --vendor lwj \
   --app-version $appVersion \
   --icon '$iconPathWsl' \

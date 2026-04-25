@@ -1,9 +1,5 @@
 # Build output
-/target/*
-/target/**/*
-!/target/installer/
-/target/installer/*
-!/target/installer/NetCDFViewer-*.exe
+/target/
 /out/
 
 # IDE and local tooling
