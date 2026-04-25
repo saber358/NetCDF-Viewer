@@ -16,6 +16,7 @@ class SwingFileDialogsTest {
         JFileChooser chooser = SwingFileDialogs.createOpenChooser(Path.of("."));
 
         assertEquals("打开 NetCDF 文件", chooser.getDialogTitle());
+        assertTrue(chooser.isMultiSelectionEnabled());
         assertFalse(chooser.isAcceptAllFileFilterUsed());
         assertTrue(chooser.getFileFilter() instanceof FileNameExtensionFilter);
         FileNameExtensionFilter filter = (FileNameExtensionFilter) chooser.getFileFilter();

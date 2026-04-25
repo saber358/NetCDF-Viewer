@@ -7,6 +7,8 @@ import java.io.File;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -25,6 +27,8 @@ public final class SwingFileDialogs {
         chooser.setDialogTitle("打开 NetCDF 文件");
         // 只允许选择文件。
         chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+        // 允许一次选择多个 NetCDF 文件。
+        chooser.setMultiSelectionEnabled(true);
         // 禁用“所有文件”过滤器，避免误选。
         chooser.setAcceptAllFileFilterUsed(false);
         // 仅允许选择 .nc 文件。
@@ -72,16 +76,31 @@ public final class SwingFileDialogs {
     }
 
     public static Path chooseOpenFile(Path initialDirectory) {
+        // 保留单文件入口，兼容现有调用方。
+        List<Path> paths = chooseOpenFiles(initialDirectory);
+        return paths.isEmpty() ? null : paths.get(0);
+    }
+
+    public static List<Path> chooseOpenFiles(Path initialDirectory) {
         // 统一在 Swing EDT 线程中弹出打开文件对话框。
         return invokeOnEdt(() -> {
             JFileChooser chooser = createOpenChooser(initialDirectory);
             int result = chooser.showOpenDialog(null);
             // 如果用户取消或没有选中文件，则返回 null。
-            if (result != JFileChooser.APPROVE_OPTION || chooser.getSelectedFile() == null) {
-                return null;
+            if (result != JFileChooser.APPROVE_OPTION) {
+                return List.of();
             }
-            // 返回所选文件路径。
-            return chooser.getSelectedFile().toPath();
+            // 返回所选文件路径集合。
+            File[] selectedFiles = chooser.getSelectedFiles();
+            if (selectedFiles != null && selectedFiles.length > 0) {
+                return Arrays.stream(selectedFiles)
+                    .map(File::toPath)
+                    .toList();
+            }
+            if (chooser.getSelectedFile() == null) {
+                return List.of();
+            }
+            return List.of(chooser.getSelectedFile().toPath());
         });
     }
 

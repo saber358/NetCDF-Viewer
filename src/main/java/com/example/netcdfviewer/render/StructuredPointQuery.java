@@ -3,6 +3,7 @@ package com.example.netcdfviewer.render;
 import com.example.netcdfviewer.model.StructuredGridDomain;
 import com.example.netcdfviewer.ui.ViewportState;
 
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -38,14 +39,16 @@ public final class StructuredPointQuery {
         Double fillValue,
         int layerIndex
     ) {
-        logger.info(() -> "开始执行标准格网单点查询, screenX="
-            + screenX
-            + ", screenY="
-            + screenY
-            + ", cellCentered="
-            + cellCentered
-            + ", layerIndex="
-            + layerIndex);
+        if (logger.isLoggable(Level.FINE)) {
+            logger.fine("开始执行标准格网单点查询, screenX="
+                + screenX
+                + ", screenY="
+                + screenY
+                + ", cellCentered="
+                + cellCentered
+                + ", layerIndex="
+                + layerIndex);
+        }
 
         // 1.1 先将点击位置转换成世界坐标，便于后续命中判断。
         double worldX = snapshot.worldX(screenX);
@@ -53,14 +56,14 @@ public final class StructuredPointQuery {
 
         // 1.2 仅支持当前阶段已打通的 1D 规则轴结构化网格。
         if (domain == null || domain.grid() == null || !domain.grid().rectilinear()) {
-            logger.info(() -> "标准格网单点查询结束, reason=UNSUPPORTED");
+            logger.fine("标准格网单点查询结束, reason=UNSUPPORTED");
             return new Result(false, worldX, worldY, -1, -1, -1, Double.NaN, layerIndex, Reason.UNSUPPORTED);
         }
 
         double[] xAxis = domain.grid().xAxis();
         double[] yAxis = domain.grid().yAxis();
         if (xAxis == null || yAxis == null || xAxis.length == 0 || yAxis.length == 0 || values == null || values.length == 0) {
-            logger.info(() -> "标准格网单点查询结束, reason=NO_HIT");
+            logger.fine("标准格网单点查询结束, reason=NO_HIT");
             return new Result(false, worldX, worldY, -1, -1, -1, Double.NaN, layerIndex, Reason.NO_HIT);
         }
 
@@ -69,7 +72,9 @@ public final class StructuredPointQuery {
             ? queryCellCentered(xAxis, yAxis, values, worldX, worldY, fillValue, layerIndex)
             : queryNodeCentered(xAxis, yAxis, values, worldX, worldY, fillValue, layerIndex);
 
-        logger.info(() -> "标准格网单点查询结束, reason=" + result.reason() + ", value=" + result.value());
+        if (logger.isLoggable(Level.FINE)) {
+            logger.fine("标准格网单点查询结束, reason=" + result.reason() + ", value=" + result.value());
+        }
         return result;
     }
 

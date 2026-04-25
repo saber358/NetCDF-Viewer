@@ -7,6 +7,7 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -99,7 +100,9 @@ public final class BasemapRenderer {
         int minTileY,
         int maxTileY
     ) {
-        logger.info(() -> "开始绘制底图瓦片, zoom=" + zoom);
+        if (logger.isLoggable(Level.FINE)) {
+            logger.fine("开始绘制底图瓦片, zoom=" + zoom);
+        }
 
         Graphics2D graphics = target.createGraphics();
         try {
@@ -121,7 +124,7 @@ public final class BasemapRenderer {
             graphics.dispose();
         }
 
-        logger.info("底图瓦片绘制完成。");
+        logger.fine("底图瓦片绘制完成。");
     }
 
     private void drawTile(
@@ -144,7 +147,9 @@ public final class BasemapRenderer {
             // 2.5 将 Web Mercator 瓦片按经纬度视口逐行重投影。
             drawReprojectedTile(graphics, targetWidth, targetHeight, snapshot, zoom, tileX, tileY, tileImage);
         } catch (IOException exception) {
-            logger.info(() -> "跳过底图瓦片, reason=" + exception.getMessage());
+            if (logger.isLoggable(Level.FINE)) {
+                logger.fine("跳过底图瓦片, reason=" + exception.getMessage());
+            }
         }
     }
 
@@ -166,7 +171,9 @@ public final class BasemapRenderer {
         int tileY,
         BufferedImage tileImage
     ) {
-        logger.info(() -> "开始重投影底图瓦片, zoom=" + zoom + ", tileX=" + tileX + ", tileY=" + tileY);
+        if (logger.isLoggable(Level.FINE)) {
+            logger.fine("开始重投影底图瓦片, zoom=" + zoom + ", tileX=" + tileX + ", tileY=" + tileY);
+        }
 
         // 3.1 计算瓦片经纬度边界对应的屏幕范围。
         double west = BasemapTileMath.tileWestLon(tileX, zoom);
@@ -180,7 +187,7 @@ public final class BasemapRenderer {
 
         // 3.2 屏幕范围无效时直接跳过。
         if (x1 == x2 || yBottom <= yTop || x2 < 0 || x1 > targetWidth || yBottom < 0 || yTop > targetHeight) {
-            logger.info("底图瓦片重投影完成, skipped=true");
+            logger.fine("底图瓦片重投影完成, skipped=true");
             return;
         }
 
@@ -213,6 +220,6 @@ public final class BasemapRenderer {
             );
         }
 
-        logger.info("底图瓦片重投影完成, skipped=false");
+        logger.fine("底图瓦片重投影完成, skipped=false");
     }
 }

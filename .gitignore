@@ -13,6 +13,7 @@
 
 # OS / JVM noise
 .DS_Store
+desktop.ini
 Thumbs.db
 hs_err_pid*
 replay_pid*

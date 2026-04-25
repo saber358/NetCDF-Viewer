@@ -3,6 +3,7 @@ package com.example.netcdfviewer.render;
 import com.example.netcdfviewer.model.StructuredGridDomain;
 import com.example.netcdfviewer.ui.ViewportState;
 
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -41,12 +42,14 @@ public final class StructuredVectorQuery {
         Double vFillValue,
         int layerIndex
     ) {
-        logger.info(() -> "开始查询结构化网格向量, screenX="
-            + screenX
-            + ", screenY="
-            + screenY
-            + ", layerIndex="
-            + layerIndex);
+        if (logger.isLoggable(Level.FINE)) {
+            logger.fine("开始查询结构化网格向量, screenX="
+                + screenX
+                + ", screenY="
+                + screenY
+                + ", layerIndex="
+                + layerIndex);
+        }
 
         // 1.1 分别查询 u、v 分量在当前屏幕点的数值。
         StructuredPointQuery.Result uResult = StructuredPointQuery.query(
@@ -72,7 +75,7 @@ public final class StructuredVectorQuery {
 
         // 1.2 任一分量未命中时直接返回未命中结果。
         if (!uResult.hit() || !vResult.hit()) {
-            logger.info("结构化网格向量查询结束, reason=NO_HIT");
+            logger.fine("结构化网格向量查询结束, reason=NO_HIT");
             return new Result(
                 false,
                 snapshot.worldX(screenX),
@@ -87,7 +90,7 @@ public final class StructuredVectorQuery {
 
         // 1.3 任一分量无有效值时返回无效结果。
         if (!uResult.hasValue() || !vResult.hasValue()) {
-            logger.info("结构化网格向量查询结束, reason=INVALID_VALUE");
+            logger.fine("结构化网格向量查询结束, reason=INVALID_VALUE");
             return new Result(
                 true,
                 uResult.worldX(),
@@ -104,7 +107,9 @@ public final class StructuredVectorQuery {
         double u = uResult.value();
         double v = vResult.value();
         double speed = Math.hypot(u, v);
-        logger.info(() -> "结构化网格向量查询结束, reason=HIT, speed=" + speed);
+        if (logger.isLoggable(Level.FINE)) {
+            logger.fine("结构化网格向量查询结束, reason=HIT, speed=" + speed);
+        }
         return new Result(true, uResult.worldX(), uResult.worldY(), u, v, speed, layerIndex, Reason.HIT);
     }
 

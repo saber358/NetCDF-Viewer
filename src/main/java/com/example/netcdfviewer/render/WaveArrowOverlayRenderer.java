@@ -8,6 +8,7 @@ import javafx.scene.paint.Color;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public final class WaveArrowOverlayRenderer {
@@ -539,7 +540,9 @@ public final class WaveArrowOverlayRenderer {
      *   2) 再映射到配置的最短和最长箭头长度
      */
     double mapArrowLength(double wavelength, RangeStats wavelengthRange) {
-        logger.info(() -> "开始映射波场箭头长度, wavelength=" + wavelength);
+        if (logger.isLoggable(Level.FINE)) {
+            logger.fine("开始映射波场箭头长度, wavelength=" + wavelength);
+        }
 
         // 3.1 先把波长值归一化到 0 到 1。
         double normalized = RenderMath.normalize(wavelength, wavelengthRange.min(), wavelengthRange.max());
@@ -547,7 +550,9 @@ public final class WaveArrowOverlayRenderer {
         // 3.2 再映射到预设的像素长度区间。
         double length = MIN_ARROW_LENGTH + normalized * (MAX_ARROW_LENGTH - MIN_ARROW_LENGTH);
 
-        logger.info(() -> "波场箭头长度映射完成, wavelength=" + wavelength + ", length=" + length);
+        if (logger.isLoggable(Level.FINE)) {
+            logger.fine("波场箭头长度映射完成, wavelength=" + wavelength + ", length=" + length);
+        }
         return length;
     }
 

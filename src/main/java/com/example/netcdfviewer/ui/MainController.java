@@ -4,6 +4,7 @@ import com.example.netcdfviewer.AppMetadata;
 import com.example.netcdfviewer.basemap.BasemapLayer;
 import com.example.netcdfviewer.basemap.BasemapRenderer;
 import com.example.netcdfviewer.basemap.HttpBasemapTileProvider;
+import com.example.netcdfviewer.io.LayerDataCache;
 import com.example.netcdfviewer.io.NetcdfDatasetParser;
 import com.example.netcdfviewer.io.ParsedDataset;
 import com.example.netcdfviewer.model.CoordinateBinding;
@@ -58,6 +59,7 @@ import javafx.util.Duration;
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -89,6 +91,8 @@ public final class MainController {
     private final MainView view;
     // NetCDF 数据解析器。
     private final NetcdfDatasetParser parser = new NetcdfDatasetParser();
+    // 变量层数据缓存。
+    private final LayerDataCache layerDataCache = new LayerDataCache(512L * 1024L * 1024L);
     // 波场变量配对识别器。
     private final WaveVariablePairFinder waveVariablePairFinder = new WaveVariablePairFinder();
     // 流场速度变量配对识别器。
@@ -626,8 +630,9 @@ public final class MainController {
         });
         view.setOnDragDropped(event -> {
             Dragboard dragboard = event.getDragboard();
-            if (hasNetcdfFile(dragboard)) {
-                loadFile(dragboard.getFiles().get(0).toPath());
+            List<Path> paths = netcdfFilePaths(dragboard.getFiles());
+            if (!paths.isEmpty()) {
+                loadFiles(paths);
                 event.setDropCompleted(true);
             } else {
                 event.setDropCompleted(false);
@@ -637,16 +642,22 @@ public final class MainController {
     }
 
     private boolean hasNetcdfFile(Dragboard dragboard) {
-        return dragboard.hasFiles()
-            && dragboard.getFiles().stream().anyMatch(file -> file.getName().toLowerCase(Locale.ROOT).endsWith(".nc"));
+        return dragboard.hasFiles() && !netcdfFilePaths(dragboard.getFiles()).isEmpty();
+    }
+
+    static List<Path> netcdfFilePaths(List<File> files) {
+        return files.stream()
+            .filter(file -> file.getName().toLowerCase(Locale.ROOT).endsWith(".nc"))
+            .map(File::toPath)
+            .collect(Collectors.toList());
     }
 
     private void openWithFileChooser() {
         try {
             // 弹出文件选择器，让用户选择 NetCDF 文件。
-            Path path = SwingFileDialogs.chooseOpenFile(lastDirectory);
-            if (path != null) {
-                loadFile(path);
+            List<Path> paths = SwingFileDialogs.chooseOpenFiles(lastDirectory);
+            if (!paths.isEmpty()) {
+                loadFiles(paths);
             } else {
                 // 用户取消时仅更新状态栏。
                 setStatus("已取消打开文件。");
@@ -668,6 +679,10 @@ public final class MainController {
         } catch (Exception exception) {
             showError("加载海岸线失败", "无法打开海岸线文件选择器：" + exception.getMessage());
         }
+    }
+
+    private void loadFiles(List<Path> paths) {
+        paths.forEach(this::loadFile);
     }
 
     private void loadFile(Path path) {
@@ -850,6 +865,7 @@ public final class MainController {
         int selectedIndex = view.getDatasetList().getSelectionModel().getSelectedIndex();
         loadedDatasets.remove(selected);
         preferredCoordinateBindingIds.remove(selected.sourcePath());
+        layerDataCache.removeSource(selected.sourcePath());
 
         if (loadedDatasets.isEmpty()) {
             clearActiveDatasetState();
@@ -872,6 +888,7 @@ public final class MainController {
         activeWavePair = null;
         activeVelocityPair = null;
         activeWindPair = null;
+        layerDataCache.clear();
         latestRenderQueryContext = null;
         navigationPreviewQueryContext = null;
         latestBaseImage = null;
@@ -1464,7 +1481,7 @@ public final class MainController {
             // 单层变量固定读取第 0 层；分层变量从滑块读取当前层号。
             int layerIndex = currentVariable.layered() ? (int) Math.round(view.getDepthSlider().getValue()) : 0;
             // 读取当前层数值数组。
-            double[] values = parser.readLayer(currentDataset, currentVariable, layerIndex);
+            double[] values = readLayerCached(currentDataset, currentVariable, layerIndex);
             // 计算当前层的自动范围。
             RangeStats computedRange = RenderMath.computeRange(values, currentVariable.fillValue());
             // 无有效值时直接显示提示。
@@ -1533,6 +1550,32 @@ public final class MainController {
             // 渲染准备阶段异常时，直接退回占位提示。
             renderPlaceholder("无法渲染当前变量：" + exception.getMessage());
         }
+    }
+
+    /*
+     * ========================================================================
+     * 步骤1：读取当前变量层数据
+     * ========================================================================
+     * 目标：
+     *   1) 优先复用已缓存的变量层数组
+     *   2) 缓存未命中时委托 NetCDF 解析器读取
+     * 操作要点：
+     *   1) 缓存键由数据源、变量名和层号组成
+     *   2) 读取异常继续向上交给渲染准备逻辑处理
+     */
+    private double[] readLayerCached(ParsedDataset dataset, VariableInfo variableInfo, int layerIndex) throws IOException {
+        logger.info(() -> "开始读取变量层数据, variable=" + variableInfo.name() + ", layerIndex=" + layerIndex);
+
+        // 1.1 使用层数据缓存包装真实读取动作。
+        double[] values = layerDataCache.getOrLoad(
+            dataset,
+            variableInfo,
+            layerIndex,
+            () -> parser.readLayer(dataset, variableInfo, layerIndex)
+        );
+
+        logger.info(() -> "变量层数据读取完成, variable=" + variableInfo.name() + ", valueCount=" + values.length);
+        return values;
     }
 
     private void renderAsync(
@@ -1897,10 +1940,10 @@ public final class MainController {
 
         try {
             int waveLayerIndex = wavePair.resolveLayerIndex(layerIndex);
-            double[] directionValues = parser.readLayer(dataset, wavePair.directionVariable(), waveLayerIndex);
-            double[] wavelengthValues = parser.readLayer(dataset, wavePair.wavelengthVariable(), waveLayerIndex);
+            double[] directionValues = readLayerCached(dataset, wavePair.directionVariable(), waveLayerIndex);
+            double[] wavelengthValues = readLayerCached(dataset, wavePair.wavelengthVariable(), waveLayerIndex);
             double[] waveHeightValues = wavePair.optionalWaveHeightVariable().isPresent()
-                ? parser.readLayer(dataset, wavePair.optionalWaveHeightVariable().orElseThrow(), waveLayerIndex)
+                ? readLayerCached(dataset, wavePair.optionalWaveHeightVariable().orElseThrow(), waveLayerIndex)
                 : null;
             RangeStats wavelengthRange = wavePair.vectorMode()
                 ? (wavePair.optionalWaveHeightVariable().isPresent()
@@ -1966,8 +2009,8 @@ public final class MainController {
 
         try {
             int flowLayerIndex = flowPair.resolveLayerIndex(layerIndex);
-            double[] uValues = parser.readLayer(dataset, flowPair.eastwardVariable(), flowLayerIndex);
-            double[] vValues = parser.readLayer(dataset, flowPair.northwardVariable(), flowLayerIndex);
+            double[] uValues = readLayerCached(dataset, flowPair.eastwardVariable(), flowLayerIndex);
+            double[] vValues = readLayerCached(dataset, flowPair.northwardVariable(), flowLayerIndex);
             List<FlowLineGenerator.FlowLine> lines = flowPair.eastwardVariable().geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
                 ? flowLineGenerator.generateStructured(
                     resolveStructuredDomainForVariable(dataset, flowPair.eastwardVariable()),
@@ -2036,8 +2079,8 @@ public final class MainController {
 
         try {
             int windLayerIndex = windPair.resolveLayerIndex(layerIndex);
-            double[] uValues = parser.readLayer(dataset, windPair.eastwardVariable(), windLayerIndex);
-            double[] vValues = parser.readLayer(dataset, windPair.northwardVariable(), windLayerIndex);
+            double[] uValues = readLayerCached(dataset, windPair.eastwardVariable(), windLayerIndex);
+            double[] vValues = readLayerCached(dataset, windPair.northwardVariable(), windLayerIndex);
             List<WindBarbOverlayRenderer.WindBarbGlyph> glyphs = windPair.eastwardVariable().geometryKind() == SpatialDomain.Kind.STRUCTURED_GRID
                 ? windBarbOverlayRenderer.sampleStructuredBarbs(
                     resolveStructuredDomainForVariable(dataset, windPair.eastwardVariable()),

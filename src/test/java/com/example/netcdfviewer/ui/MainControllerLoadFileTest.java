@@ -14,10 +14,12 @@ import javafx.stage.Stage;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.io.File;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.nio.file.Files;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -32,6 +34,17 @@ class MainControllerLoadFileTest {
     static void initToolkit() {
         new JFXPanel();
         Platform.setImplicitExit(false);
+    }
+
+    @Test
+    void netcdfFilePathsKeepsEveryNcFileInDropOrder() {
+        List<Path> paths = MainController.netcdfFilePaths(List.of(
+            new File("first.nc"),
+            new File("notes.txt"),
+            new File("second.NC")
+        ));
+
+        assertEquals(List.of(Path.of("first.nc"), Path.of("second.NC")), paths);
     }
 
     @Test
