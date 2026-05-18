@@ -140,83 +140,96 @@ public final class MainView extends BorderPane {
 
     private void build() {
         // 设置根容器内边距。
-        setPadding(new Insets(8));
+        setPadding(new Insets(0));
 
-        // 创建文件菜单并挂载常用文件操作。
+        // ── 顶部区域 ──
         Menu fileMenu = new Menu("文件");
         fileMenu.getItems().addAll(openMenuItem, loadCoastlineMenuItem, useBuiltInCoastlineMenuItem, clearCoastlineMenuItem, exportPngMenuItem, exitMenuItem);
-        // 将关于菜单项加入帮助菜单。
         helpMenu.getItems().add(aboutMenuItem);
-        // 顶部菜单栏同时显示文件菜单和帮助菜单。
         MenuBar menuBar = new MenuBar(fileMenu, helpMenu);
+        menuBar.getStyleClass().add("app-menu-bar");
 
-        // 顶部工具栏提供打开、导出和重置视图等快捷操作。
-        ToolBar toolBar = new ToolBar(openButton, exportButton, resetViewButton, new Separator(), datasetLabel);
-        // 菜单栏与工具栏一起组成顶部区域。
+        ToolBar toolBar = new ToolBar(openButton, new Separator(), exportButton, new Separator(), resetViewButton, new Separator(), datasetLabel);
+        toolBar.getStyleClass().add("app-tool-bar");
+
         VBox topBox = new VBox(menuBar, toolBar);
         setTop(topBox);
 
-        // 统一配置几个只读文本区域。
+        // ── 左侧面板 ──
         configureTextArea(summaryArea);
         configureTextArea(attributesArea);
         configureTextArea(warningsArea);
 
         datasetList.setPlaceholder(new Label("暂无数据集"));
         datasetList.setPrefHeight(120);
+        datasetList.getStyleClass().add("dataset-list-view");
         variableList.setPlaceholder(new Label("暂无变量"));
         variableList.setPrefHeight(260);
+        variableList.getStyleClass().add("variable-list-view");
 
-        // 左侧标签页分别显示摘要、属性和警告信息。
         TabPane leftTabs = new TabPane(
             createTab("摘要", summaryArea),
             createTab("属性", attributesArea),
             createTab("警告", warningsArea)
         );
+        leftTabs.getStyleClass().addAll("info-tab-pane", "left-tab-pane");
         VBox.setVgrow(leftTabs, Priority.ALWAYS);
 
         Label datasetListLabel = new Label("已加载数据");
+        datasetListLabel.getStyleClass().add("panel-title");
         HBox datasetHeader = new HBox(8, datasetListLabel, removeDatasetButton);
         datasetHeader.setAlignment(Pos.CENTER_LEFT);
+        datasetHeader.getStyleClass().add("panel-header");
+
         Label variableListLabel = new Label("变量");
-        // 左侧面板由变量列表和信息标签页组成。
-        VBox leftPanel = new VBox(8, datasetHeader, datasetList, variableListLabel, variableList, leftTabs);
-        leftPanel.setPadding(new Insets(12));
+        variableListLabel.getStyleClass().add("panel-title");
+
+        VBox leftPanel = new VBox(10, datasetHeader, datasetList, variableListLabel, variableList, leftTabs);
+        leftPanel.getStyleClass().add("left-panel");
         leftPanel.setPrefWidth(330);
 
-        // 设置覆盖提示文字样式，便于在空白或加载状态下提示用户。
-        overlayLabel.setStyle("-fx-font-size: 16px; -fx-text-fill: #4A5568; -fx-background-color: rgba(255,255,255,0.88); -fx-padding: 16 20 16 20; -fx-background-radius: 10;");
+        // ── 中央画布区域 ──
+        overlayLabel.getStyleClass().add("overlay-label");
         overlayLabel.setWrapText(true);
         overlayLabel.setMaxWidth(420);
         overlayLabel.setMouseTransparent(true);
 
-        // 设置主画布背景和边框样式。
-        canvasHost.setStyle("-fx-background-color: linear-gradient(to bottom, #F8FBFD, #EEF3F7); -fx-border-color: #D0D7DE; -fx-border-radius: 8; -fx-background-radius: 8;");
+        canvasHost.getStyleClass().add("canvas-card");
         canvasHost.setPrefSize(900, 720);
-        // 让 Canvas 不参与父容器的自动尺寸计算，防止出现反复放大问题。
         renderCanvas.setManaged(false);
-        // 画布与覆盖提示都叠放在同一个容器内。
         canvasHost.getChildren().addAll(renderCanvas, overlayLabel);
         StackPane.setAlignment(renderCanvas, Pos.TOP_LEFT);
         StackPane.setAlignment(overlayLabel, Pos.CENTER);
 
-        // 中间区域左边放主图，右边放色条。
+        // 画布标题栏：显示当前变量名
+        currentVariableLabel.getStyleClass().add("canvas-title");
+        HBox canvasHeader = new HBox(currentVariableLabel);
+        canvasHeader.setAlignment(Pos.CENTER_LEFT);
+        canvasHeader.getStyleClass().add("canvas-header");
+
         visualizationBox.getChildren().addAll(canvasHost, colorBarCanvas);
         HBox.setHgrow(canvasHost, Priority.ALWAYS);
 
-        // 中央面板上方显示变量名，下方显示图形区域。
-        VBox centerPanel = new VBox(8, currentVariableLabel, visualizationBox);
-        centerPanel.setPadding(new Insets(12));
+        VBox centerPanel = new VBox(canvasHeader, visualizationBox);
+        centerPanel.getStyleClass().add("center-panel");
         VBox.setVgrow(visualizationBox, Priority.ALWAYS);
 
+        // ── 右侧控制面板 ──
         Label colorMapLabel = new Label("色表");
+        colorMapLabel.getStyleClass().add("section-label");
         Label depthLabel = new Label("图层");
+        depthLabel.getStyleClass().add("section-label");
+
         depthSlider.setBlockIncrement(1);
         depthSlider.setMajorTickUnit(1);
         depthSlider.setMinorTickCount(0);
         depthSlider.setShowTickMarks(true);
         depthSlider.setShowTickLabels(false);
+        depthSlider.getStyleClass().add("depth-slider");
+
         coordinateXCombo.setPromptText("横坐标");
         coordinateYCombo.setPromptText("纵坐标");
+        coordinateSelectionBox.getStyleClass().add("coordinate-selection-box");
         coordinateSelectionBox.getChildren().addAll(
             coordinateSelectionLabel,
             new Label("横坐标"),
@@ -241,28 +254,44 @@ public final class MainView extends BorderPane {
         basemapOpacitySlider.setMinorTickCount(4);
         basemapOpacitySlider.setShowTickMarks(true);
         basemapOpacitySlider.setShowTickLabels(false);
+        basemapOpacitySlider.getStyleClass().add("opacity-slider");
         minField.setPromptText("最小值");
         maxField.setPromptText("最大值");
-        // 手动范围区由最小值、最大值和应用按钮组成。
         HBox rangeBox = new HBox(8, minField, maxField, applyRangeButton);
+        rangeBox.getStyleClass().add("range-input-row");
 
-        // 右侧面板用于放置坐标、层控制、颜色表和范围控制。
-        VBox rightPanel = new VBox(
-            10,
+        visualizeButton.getStyleClass().addAll("render-button", "accent-button");
+
+        // 坐标信息卡片
+        VBox coordInfoCard = makeCard("坐标信息",
             coordinateVariableLabel,
             coordinateSelectionBox,
             connectivityVariableLabel,
-            variableMetaLabel,
-            visualizeButton,
-            new Label("底图"),
+            variableMetaLabel
+        );
+
+        // 底图卡片
+        Label basemapSectionLabel = new Label("底图");
+        basemapSectionLabel.getStyleClass().add("section-label");
+        Label basemapOpacityLabel = new Label("底图透明度");
+        basemapOpacityLabel.getStyleClass().add("section-label");
+        VBox basemapCard = makeCard("底图设置",
             basemapCheck,
             basemapCombo,
             customBasemapButton,
-            new Label("底图透明度"),
-            basemapOpacitySlider,
+            basemapOpacityLabel,
+            basemapOpacitySlider
+        );
+
+        // 叠加卡片
+        VBox overlayCard = makeCard("叠加图层",
             flowLineCheck,
             waveArrowCheck,
-            windBarbCheck,
+            windBarbCheck
+        );
+
+        // 颜色与范围卡片
+        VBox colorCard = makeCard("颜色与范围",
             colorMapLabel,
             colorMapCombo,
             depthLabel,
@@ -272,45 +301,61 @@ public final class MainView extends BorderPane {
             rangeBox,
             rangeInfoLabel
         );
+
+        VBox rightPanel = new VBox(10,
+            visualizeButton,
+            coordInfoCard,
+            basemapCard,
+            overlayCard,
+            colorCard
+        );
         rightPanel.setPadding(new Insets(12));
         rightPanel.setPrefWidth(280);
-        rightPanel.setStyle("-fx-background-color: #FBFCFE; -fx-border-color: #D0D7DE; -fx-border-radius: 8; -fx-background-radius: 8;");
+        rightPanel.getStyleClass().add("right-panel");
 
-        // 用滚动容器包裹右侧控制区，以适应较小窗口尺寸。
         ScrollPane rightScroll = new ScrollPane(rightPanel);
         rightScroll.setFitToWidth(true);
         rightScroll.setFitToHeight(true);
+        rightScroll.getStyleClass().add("right-scroll");
 
-        // 左中右三部分组成主界面主体。
+        // ── 主分割面板 ──
         SplitPane splitPane = new SplitPane(leftPanel, centerPanel, rightScroll);
         splitPane.setDividerPositions(0.22, 0.8);
+        splitPane.getStyleClass().add("main-split-pane");
         setCenter(splitPane);
 
-        // 用弹性区域把状态文本和作者信息分隔到左右两端。
+        // ── 状态栏 ──
         Region statusSpacer = new Region();
         HBox.setHgrow(statusSpacer, Priority.ALWAYS);
-        authorLabel.setStyle("-fx-text-fill: #475569;");
+        statusLabel.getStyleClass().add("status-text");
+        authorLabel.getStyleClass().add("author-text");
         HBox statusBar = new HBox(12, statusLabel, statusSpacer, authorLabel);
-        statusBar.setPadding(new Insets(8, 12, 4, 12));
+        statusBar.getStyleClass().add("status-bar");
         statusBar.setAlignment(Pos.CENTER_LEFT);
-        statusBar.setStyle("-fx-background-color: #F5F7FA; -fx-border-color: #D0D7DE transparent transparent transparent;");
         setBottom(statusBar);
     }
 
+    private VBox makeCard(String title, javafx.scene.Node... children) {
+        Label titleLabel = new Label(title);
+        titleLabel.getStyleClass().add("card-title");
+        VBox card = new VBox(6);
+        card.getStyleClass().add("settings-card");
+        card.getChildren().add(titleLabel);
+        card.getChildren().addAll(children);
+        return card;
+    }
+
     private Tab createTab(String title, TextArea area) {
-        // 创建不可关闭的标签页，保证布局稳定。
         Tab tab = new Tab(title, area);
         tab.setClosable(false);
         return tab;
     }
 
     private void configureTextArea(TextArea area) {
-        // 信息区统一设置为只读。
         area.setEditable(false);
-        // 关闭自动换行，保持原始文本结构。
         area.setWrapText(false);
-        // 设置默认显示行数。
         area.setPrefRowCount(10);
+        area.getStyleClass().add("info-text-area");
     }
 
     public MenuItem getOpenMenuItem() {

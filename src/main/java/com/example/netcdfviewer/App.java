@@ -1,5 +1,6 @@
 package com.example.netcdfviewer;
 
+import atlantafx.base.theme.NordLight;
 import com.example.netcdfviewer.ui.MainController;
 import com.example.netcdfviewer.ui.MainView;
 import javafx.application.Application;
@@ -19,10 +20,16 @@ public final class App extends Application {
 
     @Override
     public void start(Stage stage) {
+        // 应用 AtlantaFX 现代主题。
+        Application.setUserAgentStylesheet(new NordLight().getUserAgentStylesheet());
+
         // 创建主界面节点树。
         MainView mainView = createMainView(stage);
         // 创建承载主界面的场景对象，并指定默认窗口尺寸。
         Scene scene = new Scene(mainView, 1440, 900);
+        // 加载自定义样式表。
+        String css = App.class.getResource("/css/app.css").toExternalForm();
+        scene.getStylesheets().add(css);
         // 尝试从资源目录加载应用图标。
         try (InputStream stream = App.class.getResourceAsStream("/icons/app-icon.png")) {
             // 只有在资源存在时才把图标加入窗口，避免空指针问题。

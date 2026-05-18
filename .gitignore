@@ -5,6 +5,7 @@
 # IDE and local tooling
 /.idea/
 /.vscode/
+/.claude/
 /.worktrees/
 /.jshell-prefs/
 *.iml

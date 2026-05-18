@@ -1,0 +1,462 @@
+/* ==========================================================
+   NetCDF Viewer - data workstation theme
+   ========================================================== */
+
+/* ---- Base ------------------------------------------------ */
+.root {
+    -fx-font-size: 13px;
+    -fx-font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+
+    -app-bg: #f4f6f9;
+    -app-surface: #ffffff;
+    -app-panel: #f8fafc;
+    -app-inset: #eef2f6;
+    -app-border: #d8dee8;
+    -app-border-soft: #e7ebf1;
+    -app-text: #1f2937;
+    -app-muted: #667085;
+    -app-subtle: #8a94a6;
+    -app-accent: #2f6f9f;
+    -app-accent-hover: #265b83;
+    -app-accent-pressed: #1f4b6d;
+    -app-accent-soft: #e6f0f8;
+    -app-success: #2f7d5c;
+
+    -color-bg-hover: #edf2f7;
+    -color-bg-pressed: #e2e8f0;
+    -color-accent-default: -app-accent;
+    -color-accent-hover: -app-accent-hover;
+    -color-accent-pressed: -app-accent-pressed;
+    -color-fg-inverse: #ffffff;
+}
+
+.label {
+    -fx-text-fill: -app-text;
+}
+
+/* ---- Menu and toolbar ------------------------------------ */
+.app-menu-bar {
+    -fx-background-color: -app-surface;
+    -fx-border-color: transparent transparent -app-border transparent;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 0 8;
+}
+
+.app-menu-bar .menu-button {
+    -fx-padding: 5 9;
+    -fx-background-radius: 4;
+}
+
+.app-menu-bar .menu-button:hover,
+.app-menu-bar .menu-button:focused,
+.app-menu-bar .menu-button:showing {
+    -fx-background-color: -color-bg-hover;
+}
+
+.app-tool-bar {
+    -fx-background-color: -app-panel;
+    -fx-border-color: transparent transparent -app-border transparent;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 6 10;
+    -fx-spacing: 6;
+}
+
+.app-tool-bar .button {
+    -fx-padding: 5 13;
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+    -fx-font-size: 12.5px;
+}
+
+.app-tool-bar .label {
+    -fx-text-fill: -app-muted;
+    -fx-font-size: 12px;
+}
+
+.app-tool-bar .separator .line {
+    -fx-border-color: transparent -app-border transparent transparent;
+    -fx-border-width: 0 1 0 0;
+}
+
+/* ---- Work areas ------------------------------------------ */
+.main-split-pane {
+    -fx-background-color: -app-bg;
+    -fx-padding: 0;
+}
+
+.main-split-pane > .split-pane-divider {
+    -fx-padding: 0 1;
+    -fx-background-color: -app-border;
+}
+
+.left-panel,
+.right-panel {
+    -fx-background-color: -app-panel;
+}
+
+.left-panel {
+    -fx-padding: 10 10 8 10;
+    -fx-spacing: 8;
+    -fx-border-color: transparent -app-border transparent transparent;
+    -fx-border-width: 0 1 0 0;
+}
+
+.right-panel {
+    -fx-padding: 10 12 12 12;
+    -fx-spacing: 0;
+    -fx-border-color: transparent transparent transparent -app-border;
+    -fx-border-width: 0 0 0 1;
+}
+
+.right-scroll,
+.right-scroll .viewport {
+    -fx-background-color: -app-panel;
+}
+
+/* ---- Panel titles ---------------------------------------- */
+.panel-header {
+    -fx-padding: 0 0 2 0;
+}
+
+.panel-title,
+.card-title,
+.section-label {
+    -fx-text-fill: -app-muted;
+}
+
+.panel-title {
+    -fx-font-size: 12px;
+    -fx-font-weight: 700;
+}
+
+.card-title {
+    -fx-font-size: 12px;
+    -fx-font-weight: 700;
+    -fx-padding: 0 0 6 0;
+}
+
+.section-label {
+    -fx-font-size: 11.5px;
+    -fx-font-weight: 600;
+    -fx-padding: 4 0 0 0;
+}
+
+/* ---- Lists ----------------------------------------------- */
+.dataset-list-view,
+.variable-list-view {
+    -fx-background-color: -app-surface;
+    -fx-border-color: -app-border;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-padding: 1;
+}
+
+.dataset-list-view .list-cell,
+.variable-list-view .list-cell {
+    -fx-padding: 5 8;
+    -fx-background-radius: 3;
+    -fx-font-size: 12.5px;
+}
+
+.dataset-list-view .list-cell:hover,
+.variable-list-view .list-cell:hover {
+    -fx-background-color: -color-bg-hover;
+}
+
+.dataset-list-view .list-cell:selected,
+.variable-list-view .list-cell:selected {
+    -fx-background-color: -app-accent-soft;
+    -fx-text-fill: -app-accent-pressed;
+}
+
+.dataset-list-view .list-cell:selected:focused,
+.variable-list-view .list-cell:selected:focused {
+    -fx-background-color: derive(-app-accent-soft, -4%);
+}
+
+.list-view .placeholder .label {
+    -fx-text-fill: -app-subtle;
+    -fx-font-style: italic;
+}
+
+/* ---- Tabs and text areas --------------------------------- */
+.info-tab-pane {
+    -fx-tab-min-width: 54;
+    -fx-background-color: transparent;
+}
+
+.info-tab-pane .tab-header-area {
+    -fx-padding: 4 0 0 0;
+}
+
+.info-tab-pane .tab {
+    -fx-background-radius: 4 4 0 0;
+    -fx-padding: 5 12;
+    -fx-font-size: 12px;
+}
+
+.info-tab-pane .tab:selected {
+    -fx-background-color: -app-surface;
+}
+
+.info-tab-pane .tab:not(:selected) {
+    -fx-background-color: -app-inset;
+}
+
+.info-text-area {
+    -fx-font-family: "Cascadia Code", "Consolas", monospace;
+    -fx-font-size: 12px;
+    -fx-control-inner-background: -app-surface;
+    -fx-border-color: -app-border;
+    -fx-border-radius: 0 0 4 4;
+    -fx-background-radius: 0 0 4 4;
+}
+
+.info-text-area .scroll-pane {
+    -fx-background-color: transparent;
+}
+
+/* ---- Canvas ---------------------------------------------- */
+.center-panel {
+    -fx-background-color: -app-bg;
+    -fx-padding: 0;
+    -fx-spacing: 0;
+}
+
+.canvas-header {
+    -fx-padding: 9 14;
+    -fx-background-color: -app-surface;
+    -fx-border-color: transparent transparent -app-border transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.canvas-title {
+    -fx-font-size: 13px;
+    -fx-font-weight: 700;
+    -fx-text-fill: -app-text;
+}
+
+.canvas-card {
+    -fx-background-color: #fbfcfd;
+    -fx-border-color: -app-border;
+    -fx-border-radius: 0;
+    -fx-background-radius: 0;
+}
+
+.overlay-label {
+    -fx-font-size: 14px;
+    -fx-text-fill: -app-muted;
+    -fx-background-color: rgba(255,255,255,0.86);
+    -fx-padding: 14 18;
+    -fx-background-radius: 4;
+    -fx-border-color: -app-border-soft;
+    -fx-border-radius: 4;
+}
+
+/* ---- Right controls -------------------------------------- */
+.settings-card {
+    -fx-padding: 11 0 13 0;
+    -fx-spacing: 6;
+    -fx-background-color: transparent;
+    -fx-border-color: transparent transparent -app-border-soft transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.settings-card .label {
+    -fx-font-size: 12px;
+}
+
+.coordinate-selection-box {
+    -fx-padding: 8 9;
+    -fx-spacing: 5;
+    -fx-background-color: -app-surface;
+    -fx-background-radius: 4;
+    -fx-border-color: -app-border;
+    -fx-border-radius: 4;
+}
+
+.range-input-row {
+    -fx-spacing: 6;
+}
+
+.range-input-row .text-field {
+    -fx-pref-width: 76;
+}
+
+/* ---- Buttons and fields ---------------------------------- */
+.button {
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+    -fx-padding: 5 12;
+}
+
+.button:hover {
+    -fx-background-color: -color-bg-hover;
+}
+
+.button:pressed {
+    -fx-background-color: -color-bg-pressed;
+}
+
+.render-button {
+    -fx-font-weight: 700;
+    -fx-font-size: 13px;
+    -fx-padding: 8 0;
+    -fx-max-width: infinity;
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+}
+
+.accent-button {
+    -fx-background-color: -app-accent;
+    -fx-text-fill: white;
+}
+
+.accent-button:hover {
+    -fx-background-color: -app-accent-hover;
+}
+
+.accent-button:pressed {
+    -fx-background-color: -app-accent-pressed;
+}
+
+.text-field,
+.combo-box {
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+    -fx-font-size: 12.5px;
+}
+
+.settings-card .combo-box,
+.coordinate-selection-box .combo-box {
+    -fx-max-width: infinity;
+}
+
+.text-field {
+    -fx-padding: 5 8;
+}
+
+.text-field:focused {
+    -fx-border-color: -app-accent;
+    -fx-border-width: 1.2;
+}
+
+.combo-box-popup .list-view {
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+    -fx-border-color: -app-border;
+    -fx-effect: dropshadow(gaussian, rgba(16,24,40,0.10), 10, 0, 0, 3);
+}
+
+.combo-box-popup .list-view .list-cell {
+    -fx-padding: 6 10;
+    -fx-background-radius: 3;
+}
+
+.combo-box-popup .list-view .list-cell:hover {
+    -fx-background-color: -color-bg-hover;
+}
+
+.check-box {
+    -fx-spacing: 7;
+}
+
+.check-box .box {
+    -fx-background-radius: 3;
+    -fx-border-radius: 3;
+    -fx-padding: 3;
+}
+
+.check-box:selected .box {
+    -fx-background-color: -app-accent;
+    -fx-border-color: -app-accent;
+}
+
+.check-box:selected .mark {
+    -fx-background-color: white;
+}
+
+/* ---- Sliders --------------------------------------------- */
+.depth-slider .track,
+.opacity-slider .track {
+    -fx-pref-height: 4;
+    -fx-background-radius: 2;
+}
+
+.depth-slider .thumb,
+.opacity-slider .thumb {
+    -fx-background-radius: 8;
+    -fx-padding: 6;
+    -fx-background-color: -app-accent;
+}
+
+.depth-slider .thumb:hover,
+.opacity-slider .thumb:hover {
+    -fx-background-color: -app-accent-hover;
+}
+
+/* ---- Scrollbars ------------------------------------------ */
+.scroll-bar {
+    -fx-background-color: transparent;
+}
+
+.scroll-bar .thumb {
+    -fx-background-color: #c4ccd8;
+    -fx-background-radius: 4;
+}
+
+.scroll-bar .thumb:hover {
+    -fx-background-color: #a9b4c3;
+}
+
+.scroll-bar .increment-button,
+.scroll-bar .decrement-button {
+    -fx-padding: 0;
+    -fx-background-color: transparent;
+}
+
+.scroll-bar .increment-arrow,
+.scroll-bar .decrement-arrow {
+    -fx-shape: "";
+    -fx-padding: 0;
+}
+
+/* ---- Status and popups ----------------------------------- */
+.status-bar {
+    -fx-background-color: -app-surface;
+    -fx-border-color: -app-border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 6 14;
+}
+
+.status-text {
+    -fx-text-fill: -app-success;
+    -fx-font-size: 12px;
+}
+
+.author-text {
+    -fx-text-fill: -app-subtle;
+    -fx-font-size: 11.5px;
+}
+
+.tooltip {
+    -fx-font-size: 12px;
+    -fx-background-radius: 4;
+    -fx-padding: 6 10;
+    -fx-background-color: -app-text;
+    -fx-text-fill: white;
+    -fx-effect: dropshadow(gaussian, rgba(16,24,40,0.18), 8, 0, 0, 2);
+}
+
+.alert .dialog-pane {
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+}
+
+.alert .dialog-pane .header-panel {
+    -fx-background-color: transparent;
+}
+
+.alert .dialog-pane .content {
+    -fx-padding: 16;
+}
