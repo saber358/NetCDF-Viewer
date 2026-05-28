@@ -70,6 +70,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -178,6 +179,8 @@ public final class MainController {
     private WritableImage latestCompositeImage;
     // Viewport snapshot that produced the composite preview cache.
     private ViewportState.Snapshot latestCompositeSnapshot;
+    // 最近一次成功渲染的基础图像视口快照。
+    private ViewportState.Snapshot latestFrameSnapshot;
     // 最近一次成功渲染的波场箭头叠加数据。
     private WaveOverlayFrame latestWaveOverlayFrame;
     // 最近一次成功渲染的流线叠加数据。
@@ -1051,6 +1054,190 @@ public final class MainController {
         logger.info("数据集渲染勾选状态更新完成, changed=true");
     }
 
+    /*
+     * ========================================================================
+     * 步骤3：收集参与渲染的数据集
+     * ========================================================================
+     * 目标：
+     *   1) 按左侧列表顺序保留已勾选数据
+     *   2) 为每个数据集确定本次要绘制的变量、空间域和层号
+     */
+    private List<RenderableDataset> collectRenderableDatasets() {
+        logger.info("开始收集参与渲染的数据集...");
+
+        // 3.1 只处理已勾选的数据集，并跳过没有可绘制变量的数据。
+        List<RenderableDataset> datasets = loadedDatasets.stream()
+            .filter(this::isDatasetRenderEnabled)
+            .map(this::toRenderableDataset)
+            .flatMap(Optional::stream)
+            .toList();
+
+        logger.info(() -> "参与渲染的数据集收集完成, count=" + datasets.size());
+        return datasets;
+    }
+
+    /*
+     * ========================================================================
+     * 步骤4：转换数据集渲染描述
+     * ========================================================================
+     * 目标：
+     *   1) 当前活动数据集使用用户当前选中的变量和层
+     *   2) 非活动数据集使用第一个可绘制变量和第 0 层
+     */
+    private Optional<RenderableDataset> toRenderableDataset(LoadedDatasetItem item) {
+        logger.info(() -> "开始转换数据集渲染描述, item=" + (item == null ? "null" : item.displayName()));
+
+        // 4.1 空条目直接跳过。
+        if (item == null) {
+            logger.info("数据集渲染描述转换完成, present=false");
+            return Optional.empty();
+        }
+
+        // 4.2 活动数据集优先使用当前变量，其他数据集使用默认可绘制变量。
+        ParsedDataset dataset = item.dataset();
+        boolean active = dataset == currentDataset;
+        VariableInfo variable = active && currentVariable != null
+            ? currentVariable
+            : dataset.plottableVariables().stream().findFirst().orElse(null);
+        if (variable == null || !variable.plottable()) {
+            logger.info("数据集渲染描述转换完成, present=false");
+            return Optional.empty();
+        }
+
+        // 4.3 活动结构化数据使用当前坐标绑定后的空间域。
+        SpatialDomain spatialDomain = active ? activeSpatialDomain : dataset.spatialDomain();
+        if (spatialDomain == null) {
+            logger.info("数据集渲染描述转换完成, present=false");
+            return Optional.empty();
+        }
+
+        // 4.4 活动分层变量使用滑块层号，其他变量固定第 0 层。
+        int layerIndex = active && variable.layered()
+            ? (int) Math.round(view.getDepthSlider().getValue())
+            : 0;
+
+        RenderableDataset renderableDataset = new RenderableDataset(item, dataset, spatialDomain, variable, layerIndex);
+
+        logger.info("数据集渲染描述转换完成, present=true");
+        return Optional.of(renderableDataset);
+    }
+
+    /*
+     * ========================================================================
+     * 步骤5：读取参与渲染的数据层
+     * ========================================================================
+     * 目标：
+     *   1) 为每个渲染数据集读取对应变量层
+     *   2) 过滤没有有效值的图层
+     */
+    private List<RenderLayer> buildRenderLayers(List<RenderableDataset> datasets) throws IOException {
+        logger.info(() -> "开始读取参与渲染的数据层, datasetCount=" + datasets.size());
+
+        // 5.1 逐个读取数据层并计算有效数值范围。
+        List<RenderLayer> layers = new ArrayList<>();
+        for (RenderableDataset dataset : datasets) {
+            double[] values = readLayerCached(dataset.dataset(), dataset.variable(), dataset.layerIndex());
+            RangeStats computedRange = RenderMath.computeRange(values, dataset.variable().fillValue());
+            if (!computedRange.empty()) {
+                layers.add(new RenderLayer(dataset, values, computedRange));
+            }
+        }
+
+        logger.info(() -> "参与渲染的数据层读取完成, layerCount=" + layers.size());
+        return layers;
+    }
+
+    /*
+     * ========================================================================
+     * 步骤6：合并多数据集数值范围
+     * ========================================================================
+     * 目标：
+     *   1) 自动范围模式下用所有参与渲染的数据共同确定色标范围
+     *   2) 保留有效值数量，供手动范围兜底复用
+     */
+    private RangeStats mergeRanges(List<RenderLayer> layers) {
+        logger.info(() -> "开始合并渲染范围, layerCount=" + layers.size());
+
+        // 6.1 遍历所有有效图层，统计全局最小值、最大值和有效值数量。
+        double min = Double.POSITIVE_INFINITY;
+        double max = Double.NEGATIVE_INFINITY;
+        int validCount = 0;
+        for (RenderLayer layer : layers) {
+            RangeStats range = layer.computedRange();
+            if (range.empty()) {
+                continue;
+            }
+            min = Math.min(min, range.min());
+            max = Math.max(max, range.max());
+            validCount += range.validCount();
+        }
+
+        // 6.2 没有有效值时返回空范围。
+        if (!Double.isFinite(min) || !Double.isFinite(max) || validCount <= 0) {
+            logger.info("渲染范围合并完成, empty=true");
+            return new RangeStats(0.0, 0.0, 0);
+        }
+
+        logger.info("渲染范围合并完成, empty=false");
+        return new RangeStats(min, max, validCount);
+    }
+
+    /*
+     * ========================================================================
+     * 步骤7：合并多数据集空间范围
+     * ========================================================================
+     * 目标：
+     *   1) 让自动适配视口覆盖所有参与渲染的数据
+     *   2) 为底图经纬度判断提供统一范围
+     */
+    private SpatialDomain combineSpatialDomains(List<RenderLayer> layers) {
+        logger.info(() -> "开始合并空间范围, layerCount=" + layers.size());
+
+        // 7.1 收集所有图层空间域的边界。
+        double minX = Double.POSITIVE_INFINITY;
+        double maxX = Double.NEGATIVE_INFINITY;
+        double minY = Double.POSITIVE_INFINITY;
+        double maxY = Double.NEGATIVE_INFINITY;
+        for (RenderLayer layer : layers) {
+            SpatialDomain domain = layer.source().spatialDomain();
+            minX = Math.min(minX, domain.minX());
+            maxX = Math.max(maxX, domain.maxX());
+            minY = Math.min(minY, domain.minY());
+            maxY = Math.max(maxY, domain.maxY());
+        }
+
+        // 7.2 非法范围直接返回空，交给调用方显示占位。
+        if (!Double.isFinite(minX) || !Double.isFinite(maxX) || !Double.isFinite(minY) || !Double.isFinite(maxY)) {
+            logger.info("空间范围合并完成, present=false");
+            return null;
+        }
+
+        logger.info("空间范围合并完成, present=true");
+        return new BoundsSpatialDomain(minX, maxX, minY, maxY);
+    }
+
+    /*
+     * ========================================================================
+     * 步骤8：查找当前活动数据的渲染层
+     * ========================================================================
+     * 目标：
+     *   1) 查询和矢量叠加仍绑定当前活动数据
+     *   2) 当前活动数据未勾选时返回空
+     */
+    private RenderLayer findActiveRenderLayer(List<RenderLayer> layers) {
+        logger.info("开始查找当前活动数据渲染层...");
+
+        // 8.1 同时匹配活动数据集和当前变量。
+        RenderLayer layer = layers.stream()
+            .filter(candidate -> candidate.source().dataset() == currentDataset)
+            .filter(candidate -> candidate.source().variable() == currentVariable)
+            .findFirst()
+            .orElse(null);
+
+        logger.info(() -> "当前活动数据渲染层查找完成, found=" + (layer != null));
+        return layer;
+    }
+
     private void openFile(Path path) {
         try {
             Path normalizedPath = normalizePath(path);
@@ -1081,6 +1268,9 @@ public final class MainController {
         activeWindPair = windVariablePairFinder.find(item.dataset()).orElse(null);
         latestRenderQueryContext = null;
         latestBaseImage = null;
+        latestCompositeImage = null;
+        latestCompositeSnapshot = null;
+        latestFrameSnapshot = null;
         latestWaveOverlayFrame = null;
         latestFlowOverlayFrame = null;
         latestWindOverlayFrame = null;
@@ -1200,6 +1390,7 @@ public final class MainController {
         latestBaseImage = null;
         latestCompositeImage = null;
         latestCompositeSnapshot = null;
+        latestFrameSnapshot = null;
         latestWaveOverlayFrame = null;
         latestFlowOverlayFrame = null;
         latestWindOverlayFrame = null;
@@ -1767,50 +1958,59 @@ public final class MainController {
             renderPlaceholder("打开 NetCDF 文件开始。");
             return;
         }
-        // 文件没有可用三角网时仅展示提示，不执行绘制。
-        if (activeSpatialDomain == null) {
-            renderPlaceholder("文件已打开，但不包含可绘制的空间域。");
-            return;
-        }
         // 未选择变量时提示用户先选择变量。
         if (currentVariable == null) {
             renderPlaceholder("请先从列表中选择变量。");
             return;
         }
-        // 只读信息变量不能参与平面绘制。
-        if (!currentVariable.plottable()) {
-            renderPlaceholder("当前变量仅用于信息展示，不能绘制为二维平面标量场。");
-            return;
-        }
 
         try {
-            // 单层变量固定读取第 0 层；分层变量从滑块读取当前层号。
-            int layerIndex = currentVariable.layered() ? (int) Math.round(view.getDepthSlider().getValue()) : 0;
-            // 读取当前层数值数组。
-            double[] values = readLayerCached(currentDataset, currentVariable, layerIndex);
-            // 计算当前层的自动范围。
-            RangeStats computedRange = RenderMath.computeRange(values, currentVariable.fillValue());
-            // 无有效值时直接显示提示。
-            if (computedRange.empty()) {
-                renderPlaceholder("当前图层没有有效值。");
+            // 收集当前已勾选的数据集。
+            boolean hasCheckedDatasets = loadedDatasets.stream().anyMatch(this::isDatasetRenderEnabled);
+            if (!hasCheckedDatasets) {
+                renderPlaceholder("未勾选要渲染的数据。");
                 return;
             }
+            // 将已勾选数据集转换为可渲染描述。
+            List<RenderableDataset> renderableDatasets = collectRenderableDatasets();
+            if (renderableDatasets.isEmpty()) {
+                renderPlaceholder("已勾选数据没有可绘制变量。");
+                return;
+            }
+            // 读取全部参与渲染的数据层。
+            List<RenderLayer> renderLayers = buildRenderLayers(renderableDatasets);
+            if (renderLayers.isEmpty()) {
+                renderPlaceholder("已勾选数据没有有效值。");
+                return;
+            }
+            // 合并空间范围，供视口适配和底图判断使用。
+            SpatialDomain renderSpatialDomain = combineSpatialDomains(renderLayers);
+            if (renderSpatialDomain == null) {
+                renderPlaceholder("已勾选数据没有可用空间范围。");
+                return;
+            }
+            // 查找当前活动数据对应的渲染层。
+            RenderLayer activeRenderLayer = findActiveRenderLayer(renderLayers);
+            // 计算全部参与渲染数据的自动范围。
+            RangeStats computedRange = mergeRanges(renderLayers);
             // 根据自动或手动配置得到最终展示范围。
             RangeStats displayRange = resolveRange(computedRange);
             // 读取当前选中的颜色表。
             ColorMap colorMap = colorMaps.getOrDefault(view.getColorMapCombo().getValue(), ColorMaps.viridis());
+            // 当前活动数据未参与渲染时，不绘制矢量叠加。
+            boolean activeDatasetRendering = activeRenderLayer != null;
             // 在当前状态下决定是否启用波场箭头叠加层。
-            WaveVariablePair wavePair = view.getWaveArrowCheck().isSelected() ? activeWavePair : null;
+            WaveVariablePair wavePair = activeDatasetRendering && view.getWaveArrowCheck().isSelected() ? activeWavePair : null;
             // 在当前状态下决定是否启用流线叠加层。
-            VelocityVariablePair flowPair = view.getFlowLineCheck().isSelected() ? activeVelocityPair : null;
+            VelocityVariablePair flowPair = activeDatasetRendering && view.getFlowLineCheck().isSelected() ? activeVelocityPair : null;
             // 在当前状态下决定是否启用风羽叠加层。
-            WindVariablePair windPair = view.getWindBarbCheck().isSelected() ? activeWindPair : null;
+            WindVariablePair windPair = activeDatasetRendering && view.getWindBarbCheck().isSelected() ? activeWindPair : null;
             // 在当前状态下决定是否启用底图。
             BasemapLayer basemapLayer = selectedBasemapLayer();
             // 读取底图透明度。
             double basemapOpacity = view.getBasemapOpacitySlider().getValue();
-            // 确保视口已适配当前网格范围。
-            viewportState.ensureFitted(activeSpatialDomain, canvas.getWidth(), canvas.getHeight());
+            // 确保视口已适配所有参与渲染的数据范围。
+            viewportState.ensureFitted(renderSpatialDomain, canvas.getWidth(), canvas.getHeight());
             // 生成新的渲染序号，供后台任务结果校验使用。
             long requestId = ++renderSequence;
             // 新一轮渲染开始时先清空旧的查询上下文，避免点击命中过期结果。
@@ -1819,6 +2019,7 @@ public final class MainController {
             WritableImage preservedBaseImage = latestBaseImage;
             WritableImage preservedCompositeImage = latestCompositeImage;
             ViewportState.Snapshot preservedCompositeSnapshot = latestCompositeSnapshot;
+            ViewportState.Snapshot preservedFrameSnapshot = latestFrameSnapshot;
             WaveOverlayFrame preservedWaveOverlayFrame = latestWaveOverlayFrame;
             FlowOverlayFrame preservedFlowOverlayFrame = latestFlowOverlayFrame;
             WindOverlayFrame preservedWindOverlayFrame = latestWindOverlayFrame;
@@ -1839,6 +2040,7 @@ public final class MainController {
                 latestBaseImage = preservedBaseImage;
                 latestCompositeImage = preservedCompositeImage;
                 latestCompositeSnapshot = preservedCompositeSnapshot;
+                latestFrameSnapshot = preservedFrameSnapshot;
                 latestWaveOverlayFrame = preservedWaveOverlayFrame;
                 latestFlowOverlayFrame = preservedFlowOverlayFrame;
                 latestWindOverlayFrame = preservedWindOverlayFrame;
@@ -1847,11 +2049,24 @@ public final class MainController {
                 latestBaseImage = null;
                 latestCompositeImage = null;
                 latestCompositeSnapshot = null;
+                latestFrameSnapshot = null;
             }
             pendingRenderInputSequence = inputSequence;
             pendingKeepCurrentFrameVisible = keepCurrentFrameVisible;
             // 在后台线程中执行真正的图像渲染。
-            renderAsync(requestId, layerIndex, values, colorMap, displayRange, wavePair, flowPair, windPair, basemapLayer, basemapOpacity);
+            renderAsync(
+                requestId,
+                renderLayers,
+                activeRenderLayer,
+                renderSpatialDomain,
+                colorMap,
+                displayRange,
+                wavePair,
+                flowPair,
+                windPair,
+                basemapLayer,
+                basemapOpacity
+            );
         } catch (Exception exception) {
             // 渲染准备阶段异常时，直接退回占位提示。
             renderPlaceholder("无法渲染当前变量：" + exception.getMessage());
@@ -1886,8 +2101,9 @@ public final class MainController {
 
     private void renderAsync(
         long requestId,
-        int layerIndex,
-        double[] values,
+        List<RenderLayer> renderLayers,
+        RenderLayer activeRenderLayer,
+        SpatialDomain renderSpatialDomain,
         ColorMap colorMap,
         RangeStats displayRange,
         WaveVariablePair wavePair,
@@ -1900,14 +2116,14 @@ public final class MainController {
         Canvas canvas = view.getRenderCanvas();
         ParsedDataset dataset = currentDataset;
         VariableInfo variable = currentVariable;
-        SpatialDomain spatialDomain = activeSpatialDomain;
         int width = Math.max(1, (int) Math.round(canvas.getWidth()));
         int height = Math.max(1, (int) Math.round(canvas.getHeight()));
         ViewportState.Snapshot snapshot = viewportState.snapshot();
         long inputSequence = pendingRenderInputSequence;
         boolean keepCurrentFrameVisible = pendingKeepCurrentFrameVisible;
-        String basemapMessage = basemapLayer != null && !isGeographicDomain(spatialDomain)
-            ? "已跳过底图：当前数据坐标不是经纬度。"
+        int activeLayerIndex = activeRenderLayer == null ? 0 : activeRenderLayer.source().layerIndex();
+        String basemapMessage = basemapLayer != null && !isGeographicDomain(renderSpatialDomain)
+            ? "已跳过底图：已勾选数据坐标不是经纬度。"
             : null;
         BasemapLayer renderBasemapLayer = basemapMessage == null ? basemapLayer : null;
 
@@ -1927,11 +2143,8 @@ public final class MainController {
             protected RenderFrame call() throws Exception {
                 // 1.1 底图和各类叠加层并行构建，最后统一汇总结果。
                 CompletableFuture<BufferedImage> baseImageFuture = CompletableFuture.supplyAsync(
-                    () -> buildBaseImage(
-                        spatialDomain,
-                        dataset,
-                        variable,
-                        values,
+                    () -> buildCompositeBaseImage(
+                        renderLayers,
                         colorMap,
                         displayRange,
                         snapshot,
@@ -1945,13 +2158,13 @@ public final class MainController {
                 CompletableFuture<OverlayBuildResult<WaveOverlayFrame>> waveFuture = scheduleWaveOverlayBuild(
                     dataset,
                     wavePair,
-                    layerIndex,
+                    activeLayerIndex,
                     snapshot
                 );
                 CompletableFuture<OverlayBuildResult<FlowOverlayFrame>> flowFuture = scheduleFlowOverlayBuild(
                     dataset,
                     flowPair,
-                    layerIndex,
+                    activeLayerIndex,
                     snapshot,
                     width,
                     height
@@ -1959,7 +2172,7 @@ public final class MainController {
                 CompletableFuture<OverlayBuildResult<WindOverlayFrame>> windFuture = scheduleWindOverlayBuild(
                     dataset,
                     windPair,
-                    layerIndex,
+                    activeLayerIndex,
                     snapshot,
                     width,
                     height
@@ -1995,22 +2208,25 @@ public final class MainController {
             navigationPreviewActive = false;
             navigationPreviewQueryContext = null;
             latestBaseImage = frame.image();
+            latestFrameSnapshot = snapshot;
             latestWaveOverlayFrame = frame.waveOverlayFrame();
             latestFlowOverlayFrame = frame.flowOverlayFrame();
             latestWindOverlayFrame = frame.windOverlayFrame();
             // 刷新右侧色条。
             view.getColorBarCanvas().render(colorMap, displayRange);
             // 缓存当前成功渲染的查询上下文，供点击单点查询复用。
-            latestRenderQueryContext = new RenderQueryContext(
-                dataset,
-                spatialDomain,
-                variable,
-                layerIndex,
-                values.clone(),
-                variable.cellCentered(),
-                variable.fillValue(),
-                snapshot
-            );
+            latestRenderQueryContext = activeRenderLayer == null
+                ? null
+                : new RenderQueryContext(
+                    dataset,
+                    activeRenderLayer.source().spatialDomain(),
+                    variable,
+                    activeRenderLayer.source().layerIndex(),
+                    activeRenderLayer.values().clone(),
+                    variable.cellCentered(),
+                    variable.fillValue(),
+                    snapshot
+                );
             // 用缓存底图和叠加层刷新主画布。
             drawLatestFrame(true);
             // 更新当前变量标签。
@@ -2018,7 +2234,7 @@ public final class MainController {
             // 更新范围标签。
             view.getRangeInfoLabel().setText("范围：" + format(displayRange.min()) + " 到 " + format(displayRange.max()));
             // 更新层信息标签。
-            updateLayerLabel(layerIndex);
+            updateLayerLabel(activeLayerIndex);
             // 更新窗口标题。
             updateWindowTitle();
             // 隐藏渲染中提示。
@@ -2027,9 +2243,12 @@ public final class MainController {
             view.getExportButton().setDisable(false);
             view.getExportPngMenuItem().setDisable(false);
             // 更新状态栏。
-            setStatus(frame.overlayMessage() == null || frame.overlayMessage().isBlank()
-                ? "已渲染 " + variable.name()
-                : frame.overlayMessage());
+            String inactiveActiveMessage = activeRenderLayer == null ? "已渲染勾选数据；当前活动数据未参与渲染。" : null;
+            String statusMessage = mergeOverlayMessages(frame.overlayMessage(), inactiveActiveMessage);
+            String defaultSuccessMessage = activeRenderLayer == null ? "已渲染勾选数据" : "已渲染 " + variable.name();
+            setStatus(statusMessage == null || statusMessage.isBlank()
+                ? defaultSuccessMessage
+                : statusMessage);
         });
 
         // 渲染失败时退回错误占位信息。
@@ -2083,7 +2302,105 @@ public final class MainController {
         BufferedImage basemapImage = basemapLayer == null
             ? null
             : basemapRenderer.render(width, height, snapshot, basemapLayer, basemapOpacity);
-        BufferedImage scalarImage = spatialDomain.kind() == SpatialDomain.Kind.STRUCTURED_GRID
+        BufferedImage scalarImage = buildScalarImage(
+            spatialDomain,
+            dataset,
+            variable,
+            values,
+            colorMap,
+            displayRange,
+            snapshot,
+            width,
+            height,
+            basemapImage != null
+        );
+
+        BufferedImage image = basemapImage == null ? scalarImage : composeBasemapAndScalar(width, height, basemapImage, scalarImage);
+
+        logger.info(() -> "标量底图构建结束, variable=" + variable.name());
+        return image;
+    }
+
+    /*
+     * ========================================================================
+     * 步骤2：构建多数据集标量底图
+     * ========================================================================
+     * 目标：
+     *   1) 底图只绘制一次
+     *   2) 勾选数据按列表顺序叠加到同一张图上
+     */
+    private BufferedImage buildCompositeBaseImage(
+        List<RenderLayer> layers,
+        ColorMap colorMap,
+        RangeStats displayRange,
+        ViewportState.Snapshot snapshot,
+        int width,
+        int height,
+        BasemapLayer basemapLayer,
+        double basemapOpacity
+    ) {
+        logger.info(() -> "开始构建多数据集标量底图, layerCount=" + layers.size());
+
+        // 2.1 先准备底图或纯色背景。
+        BufferedImage image = basemapLayer == null
+            ? new BufferedImage(Math.max(1, width), Math.max(1, height), BufferedImage.TYPE_INT_ARGB)
+            : basemapRenderer.render(width, height, snapshot, basemapLayer, basemapOpacity);
+        Graphics2D graphics = image.createGraphics();
+        try {
+            if (basemapLayer == null) {
+                graphics.setColor(Color.decode("#F8FBFD"));
+                graphics.fillRect(0, 0, image.getWidth(), image.getHeight());
+            }
+
+            // 2.2 再按列表顺序绘制每个 NetCDF 标量图。
+            for (RenderLayer layer : layers) {
+                BufferedImage scalarImage = buildScalarImage(
+                    layer.source().spatialDomain(),
+                    layer.source().dataset(),
+                    layer.source().variable(),
+                    layer.values(),
+                    colorMap,
+                    displayRange,
+                    snapshot,
+                    width,
+                    height,
+                    true
+                );
+                graphics.drawImage(scalarImage, 0, 0, null);
+            }
+        } finally {
+            // 2.3 释放绘图上下文。
+            graphics.dispose();
+        }
+
+        logger.info("多数据集标量底图构建结束。");
+        return image;
+    }
+
+    /*
+     * ========================================================================
+     * 步骤3：构建单个标量图层
+     * ========================================================================
+     * 目标：
+     *   1) 规则格网和三角网沿用原有渲染器
+     *   2) 多图层叠加时输出透明背景
+     */
+    private BufferedImage buildScalarImage(
+        SpatialDomain spatialDomain,
+        ParsedDataset dataset,
+        VariableInfo variable,
+        double[] values,
+        ColorMap colorMap,
+        RangeStats displayRange,
+        ViewportState.Snapshot snapshot,
+        int width,
+        int height,
+        boolean transparentBackground
+    ) {
+        logger.info(() -> "开始构建单个标量图层, variable=" + variable.name());
+
+        // 3.1 根据空间域类型选择对应渲染器。
+        BufferedImage image = spatialDomain.kind() == SpatialDomain.Kind.STRUCTURED_GRID
             ? structuredImageRenderer.render(
                 width,
                 height,
@@ -2094,7 +2411,7 @@ public final class MainController {
                 snapshot,
                 variable.cellCentered(),
                 variable.fillValue(),
-                basemapImage == null ? 0xFFF8FBFD : 0x00000000
+                transparentBackground ? 0x00000000 : 0xFFF8FBFD
             )
             : imageRenderer.render(
                 width,
@@ -2106,18 +2423,16 @@ public final class MainController {
                 snapshot,
                 variable.elementCentered(),
                 variable.fillValue(),
-                basemapImage == null ? Color.decode("#F8FBFD") : new Color(0, 0, 0, 0)
+                transparentBackground ? new Color(0, 0, 0, 0) : Color.decode("#F8FBFD")
             );
 
-        BufferedImage image = basemapImage == null ? scalarImage : composeBasemapAndScalar(width, height, basemapImage, scalarImage);
-
-        logger.info(() -> "标量底图构建结束, variable=" + variable.name());
+        logger.info(() -> "单个标量图层构建结束, variable=" + variable.name());
         return image;
     }
 
     /*
      * ========================================================================
-     * 步骤3：组合底图与标量图
+     * 步骤4：组合底图与标量图
      * ========================================================================
      * 目标：
      *   1) 确保底图绘制在最下层
@@ -2465,7 +2780,7 @@ public final class MainController {
 
     private void drawLatestFrame(boolean refreshCompositeCache) {
         // 3.1 没有缓存底图或查询上下文时直接返回。
-        if (latestBaseImage == null || latestRenderQueryContext == null) {
+        if (latestBaseImage == null || latestFrameSnapshot == null) {
             return;
         }
 
@@ -2486,7 +2801,7 @@ public final class MainController {
             stopFlowAnimation();
         }
 
-        if (view.getWaveArrowCheck().isSelected() && latestWaveOverlayFrame != null) {
+        if (view.getWaveArrowCheck().isSelected() && latestWaveOverlayFrame != null && latestRenderQueryContext != null) {
             if (latestWaveOverlayFrame.pair().vectorMode()
                 && latestWaveOverlayFrame.directionDomain() != null
                 && latestWaveOverlayFrame.wavelengthDomain() != null) {
@@ -2557,7 +2872,7 @@ public final class MainController {
         coastlineOverlayRenderer.render(
             canvas.getGraphicsContext2D(),
             currentOverlay,
-            latestRenderQueryContext.snapshot()
+            latestFrameSnapshot
         );
         if (refreshCompositeCache) {
             cacheLatestCompositeFrame();
@@ -2567,12 +2882,12 @@ public final class MainController {
     private boolean drawViewportPreview() {
         logger.info("Start drawing viewport preview");
 
-        if (latestCompositeImage == null || latestCompositeSnapshot == null || latestRenderQueryContext == null) {
+        if (latestCompositeImage == null || latestCompositeSnapshot == null || latestFrameSnapshot == null) {
             logger.info("Finish drawing viewport preview, drawn=false");
             return false;
         }
 
-        ViewportState.Snapshot currentSnapshot = latestRenderQueryContext.snapshot();
+        ViewportState.Snapshot currentSnapshot = viewportState.snapshot();
         double sourceScale = latestCompositeSnapshot.scale();
         if (!Double.isFinite(sourceScale) || sourceScale <= 0.0 || !Double.isFinite(currentSnapshot.scale())) {
             logger.info("Finish drawing viewport preview, drawn=false");
@@ -2603,7 +2918,7 @@ public final class MainController {
     private void cacheLatestCompositeFrame() {
         logger.info("Start caching composite frame");
 
-        if (latestRenderQueryContext == null) {
+        if (latestFrameSnapshot == null) {
             latestCompositeImage = null;
             latestCompositeSnapshot = null;
             logger.info("Finish caching composite frame, cached=false");
@@ -2619,7 +2934,7 @@ public final class MainController {
             latestCompositeImage = new WritableImage(width, height);
         }
         latestCompositeImage = canvas.snapshot(new SnapshotParameters(), latestCompositeImage);
-        latestCompositeSnapshot = latestRenderQueryContext.snapshot();
+        latestCompositeSnapshot = latestFrameSnapshot;
 
         logger.info("Finish caching composite frame, cached=true");
     }
@@ -2726,6 +3041,7 @@ public final class MainController {
         latestBaseImage = null;
         latestCompositeImage = null;
         latestCompositeSnapshot = null;
+        latestFrameSnapshot = null;
         latestWaveOverlayFrame = null;
         latestFlowOverlayFrame = null;
         latestWindOverlayFrame = null;
@@ -2859,7 +3175,7 @@ public final class MainController {
         if (navigationPreviewActive && drawViewportPreview()) {
             return;
         }
-        if (latestBaseImage != null && latestRenderQueryContext != null) {
+        if (latestBaseImage != null && latestFrameSnapshot != null) {
             drawLatestFrame(true);
             return;
         }
@@ -3027,6 +3343,34 @@ public final class MainController {
         WindOverlayFrame windOverlayFrame,
         String overlayMessage
     ) {
+    }
+
+    private record RenderableDataset(
+        LoadedDatasetItem item,
+        ParsedDataset dataset,
+        SpatialDomain spatialDomain,
+        VariableInfo variable,
+        int layerIndex
+    ) {
+    }
+
+    private record RenderLayer(
+        RenderableDataset source,
+        double[] values,
+        RangeStats computedRange
+    ) {
+    }
+
+    private record BoundsSpatialDomain(
+        double minX,
+        double maxX,
+        double minY,
+        double maxY
+    ) implements SpatialDomain {
+        @Override
+        public Kind kind() {
+            return SpatialDomain.Kind.STRUCTURED_GRID;
+        }
     }
 
     private record WaveOverlayFrame(

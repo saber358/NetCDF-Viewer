@@ -588,6 +588,72 @@ class MainControllerLoadFileTest {
     }
 
     @Test
+    void checkedDatasetsAreCollectedInListOrderForRendering() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("ydw.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("HBHQY.nc"));
+
+                List<?> sources = collectRenderableDatasets(controller);
+
+                assertEquals(2, sources.size());
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void uncheckedDatasetsAreExcludedFromRendering() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("ydw.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("HBHQY.nc"));
+
+                setDatasetRenderEnabled(controller, view.getDatasetList().getItems().get(0), false);
+
+                List<?> sources = collectRenderableDatasets(controller);
+
+                assertEquals(1, sources.size());
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
     void removingActiveDatasetFallsBackToRemainingDataset() throws Exception {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<Throwable> errorRef = new AtomicReference<>();
@@ -1653,6 +1719,12 @@ class MainControllerLoadFileTest {
         Method method = MainController.class.getDeclaredMethod("setDatasetRenderEnabled", LoadedDatasetItem.class, boolean.class);
         method.setAccessible(true);
         method.invoke(controller, item, enabled);
+    }
+
+    private static List<?> collectRenderableDatasets(MainController controller) throws Exception {
+        Method method = MainController.class.getDeclaredMethod("collectRenderableDatasets");
+        method.setAccessible(true);
+        return (List<?>) method.invoke(controller);
     }
 
     private static void readStatus(MainView view, AtomicReference<String> statusRef) throws Exception {
