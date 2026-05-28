@@ -42,12 +42,15 @@ import javafx.collections.ObservableList;
 import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Point2D;
+import javafx.geometry.Pos;
 import javafx.scene.SnapshotParameters;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.SelectionMode;
 import javafx.scene.control.TextInputDialog;
@@ -56,6 +59,7 @@ import javafx.scene.input.Dragboard;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.TransferMode;
+import javafx.scene.layout.HBox;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 
@@ -230,6 +234,7 @@ public final class MainController {
         view.getColorMapCombo().getSelectionModel().select("Viridis");
         // 初始化已加载数据集列表。
         view.getDatasetList().setItems(loadedDatasets);
+        view.getDatasetList().setCellFactory(list -> new DatasetCell());
         view.getClearCoastlineMenuItem().setDisable(true);
         view.getUseBuiltInCoastlineMenuItem().setDisable(false);
         // 设置常用快捷键。
@@ -3054,6 +3059,62 @@ public final class MainController {
     }
 
     private record OverlayBuildResult<T>(T frame, String message) {
+    }
+
+    /*
+     * ========================================================================
+     * 步骤1：渲染已加载数据集列表单元格
+     * ========================================================================
+     * 目标：
+     *   1) 用勾选框控制数据集是否参与渲染
+     *   2) 保留列表行选择用于切换当前活动数据集
+     */
+    final class DatasetCell extends ListCell<LoadedDatasetItem> {
+        private final CheckBox checkBox = new CheckBox();
+        private final Label label = new Label();
+        private final HBox content = new HBox(8, checkBox, label);
+        private LoadedDatasetItem currentItem;
+
+        DatasetCell() {
+            logger.info("开始初始化数据集列表单元格...");
+
+            // 1.1 设置单元格内部控件布局。
+            content.setAlignment(Pos.CENTER_LEFT);
+
+            // 1.2 勾选框变化时只改变渲染状态，不删除数据集。
+            checkBox.setOnAction(event -> {
+                if (currentItem != null) {
+                    setDatasetRenderEnabled(currentItem, checkBox.isSelected());
+                }
+            });
+
+            logger.info("数据集列表单元格初始化完成。");
+        }
+
+        @Override
+        protected void updateItem(LoadedDatasetItem item, boolean empty) {
+            logger.info("开始刷新数据集列表单元格...");
+
+            // 1.3 保留 JavaFX 标准单元格刷新流程。
+            super.updateItem(item, empty);
+            currentItem = item;
+
+            // 1.4 空单元格清空文本和图形。
+            if (empty || item == null) {
+                setText(null);
+                setGraphic(null);
+                logger.info("数据集列表单元格刷新完成, empty=true");
+                return;
+            }
+
+            // 1.5 用当前数据集名称和渲染勾选状态刷新控件。
+            label.setText(item.displayName());
+            checkBox.setSelected(isDatasetRenderEnabled(item));
+            setText(null);
+            setGraphic(content);
+
+            logger.info("数据集列表单元格刷新完成, empty=false");
+        }
     }
 
     record InvalidGeographicCoordinateWarning(
