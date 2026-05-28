@@ -497,6 +497,72 @@ class MainControllerLoadFileTest {
     }
 
     @Test
+    void newlyOpenedDatasetsAreEnabledForRenderingByDefault() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("ydw.nc"));
+                openFile.invoke(controller, SampleDatasetPaths.resolve("HBHQY.nc"));
+
+                assertEquals(2, view.getDatasetList().getItems().size());
+                assertTrue(isDatasetRenderEnabled(controller, view.getDatasetList().getItems().get(0)));
+                assertTrue(isDatasetRenderEnabled(controller, view.getDatasetList().getItems().get(1)));
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
+    void renderEnabledStateCanBeDisabledWithoutRemovingDataset() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+
+        Platform.runLater(() -> {
+            try {
+                MainView view = new MainView();
+                MainController controller = new MainController(new Stage(), view);
+                controller.initialize();
+
+                Method openFile = MainController.class.getDeclaredMethod("openFile", Path.class);
+                openFile.setAccessible(true);
+                openFile.invoke(controller, SampleDatasetPaths.resolve("ydw.nc"));
+
+                LoadedDatasetItem item = view.getDatasetList().getItems().get(0);
+                setDatasetRenderEnabled(controller, item, false);
+
+                assertEquals(1, view.getDatasetList().getItems().size());
+                assertFalse(isDatasetRenderEnabled(controller, item));
+                assertTrue(view.getDatasetLabel().getText().contains("ydw.nc"));
+            } catch (Throwable throwable) {
+                errorRef.set(throwable);
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        if (errorRef.get() != null) {
+            throw new AssertionError(errorRef.get());
+        }
+    }
+
+    @Test
     void removingActiveDatasetFallsBackToRemainingDataset() throws Exception {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<Throwable> errorRef = new AtomicReference<>();
@@ -1550,6 +1616,18 @@ class MainControllerLoadFileTest {
             throw new AssertionError(errorRef.get());
         }
         return snapshotRef.get();
+    }
+
+    private static boolean isDatasetRenderEnabled(MainController controller, LoadedDatasetItem item) throws Exception {
+        Method method = MainController.class.getDeclaredMethod("isDatasetRenderEnabled", LoadedDatasetItem.class);
+        method.setAccessible(true);
+        return (boolean) method.invoke(controller, item);
+    }
+
+    private static void setDatasetRenderEnabled(MainController controller, LoadedDatasetItem item, boolean enabled) throws Exception {
+        Method method = MainController.class.getDeclaredMethod("setDatasetRenderEnabled", LoadedDatasetItem.class, boolean.class);
+        method.setAccessible(true);
+        method.invoke(controller, item, enabled);
     }
 
     private static void readStatus(MainView view, AtomicReference<String> statusRef) throws Exception {

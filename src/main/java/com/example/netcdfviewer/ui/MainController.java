@@ -67,11 +67,13 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -128,6 +130,8 @@ public final class MainController {
     private final Map<Path, String> preferredCoordinateBindingIds = new LinkedHashMap<>();
     // 已加载数据集集合。
     private final ObservableList<LoadedDatasetItem> loadedDatasets = FXCollections.observableArrayList();
+    // 当前勾选参与渲染的数据集路径。
+    private final Set<Path> renderEnabledDatasetPaths = new HashSet<>();
     // 当前已打开的数据集。
     private ParsedDataset currentDataset;
     // 当前激活的数据空间域；标准格网会随坐标绑定切换。
@@ -981,8 +985,65 @@ public final class MainController {
         }
         LoadedDatasetItem item = new LoadedDatasetItem(path, path.getFileName().toString(), dataset);
         loadedDatasets.add(item);
+        renderEnabledDatasetPaths.add(normalizePath(path));
         view.getDatasetList().getSelectionModel().select(item);
         setStatus("已加载 " + path.getFileName());
+    }
+
+    /*
+     * ========================================================================
+     * 步骤1：判断数据集是否参与渲染
+     * ========================================================================
+     * 目标：
+     *   1) 以规范化源路径作为稳定键
+     *   2) 供列表勾选框和渲染入口共用
+     */
+    private boolean isDatasetRenderEnabled(LoadedDatasetItem item) {
+        logger.info("开始判断数据集渲染勾选状态...");
+
+        // 1.1 空条目不参与渲染。
+        if (item == null) {
+            logger.info("数据集渲染勾选状态判断完成, enabled=false");
+            return false;
+        }
+
+        // 1.2 使用规范化路径查询勾选集合。
+        boolean enabled = renderEnabledDatasetPaths.contains(normalizePath(item.sourcePath()));
+
+        logger.info(() -> "数据集渲染勾选状态判断完成, enabled=" + enabled);
+        return enabled;
+    }
+
+    /*
+     * ========================================================================
+     * 步骤2：更新数据集渲染勾选状态
+     * ========================================================================
+     * 目标：
+     *   1) 勾选时加入渲染集合
+     *   2) 取消勾选时仅移出渲染集合，不卸载数据
+     */
+    private void setDatasetRenderEnabled(LoadedDatasetItem item, boolean enabled) {
+        logger.info(() -> "开始更新数据集渲染勾选状态, enabled=" + enabled);
+
+        // 2.1 空条目不处理。
+        if (item == null) {
+            logger.info("数据集渲染勾选状态更新完成, changed=false");
+            return;
+        }
+
+        // 2.2 根据勾选值增删规范化路径。
+        Path path = normalizePath(item.sourcePath());
+        if (enabled) {
+            renderEnabledDatasetPaths.add(path);
+        } else {
+            renderEnabledDatasetPaths.remove(path);
+        }
+
+        // 2.3 刷新列表展示并触发画布重绘。
+        view.getDatasetList().refresh();
+        renderCurrentSelection();
+
+        logger.info("数据集渲染勾选状态更新完成, changed=true");
     }
 
     private void openFile(Path path) {
@@ -1102,6 +1163,7 @@ public final class MainController {
 
         int selectedIndex = view.getDatasetList().getSelectionModel().getSelectedIndex();
         loadedDatasets.remove(selected);
+        renderEnabledDatasetPaths.remove(normalizePath(selected.sourcePath()));
         preferredCoordinateBindingIds.remove(selected.sourcePath());
         layerDataCache.removeSource(selected.sourcePath());
 
@@ -1127,6 +1189,7 @@ public final class MainController {
         activeVelocityPair = null;
         activeWindPair = null;
         layerDataCache.clear();
+        renderEnabledDatasetPaths.clear();
         latestRenderQueryContext = null;
         navigationPreviewQueryContext = null;
         latestBaseImage = null;
