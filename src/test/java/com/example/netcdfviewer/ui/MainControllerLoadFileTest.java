@@ -1,7 +1,9 @@
 package com.example.netcdfviewer.ui;
 
 import com.example.netcdfviewer.AppMetadata;
+import com.example.netcdfviewer.io.NetcdfDatasetParser;
 import com.example.netcdfviewer.io.ParsedDataset;
+import com.example.netcdfviewer.model.SpatialDomain;
 import com.example.netcdfviewer.model.VariableInfo;
 import com.example.netcdfviewer.testsupport.SampleDatasetPaths;
 import javafx.application.Platform;
@@ -20,6 +22,7 @@ import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.nio.file.Files;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -45,6 +48,87 @@ class MainControllerLoadFileTest {
         ));
 
         assertEquals(List.of(Path.of("first.nc"), Path.of("second.NC")), paths);
+    }
+
+    @Test
+    void hydDoesNotNeedInvalidGeographicWarning() throws Exception {
+        ParsedDataset dataset = new NetcdfDatasetParser().open(SampleDatasetPaths.resolve("HYD.nc"));
+
+        MainController.InvalidGeographicCoordinateWarning warning = MainController.invalidGeographicCoordinateWarning(dataset);
+
+        assertFalse(warning.warningRequired());
+        assertTrue(warning.geographicNames());
+        assertTrue(warning.validLongitude());
+        assertTrue(warning.validLatitude());
+    }
+
+    @Test
+    void dsdNeedsInvalidGeographicWarningBecauseLatitudeRangeIsInvalid() throws Exception {
+        ParsedDataset dataset = new NetcdfDatasetParser().open(SampleDatasetPaths.resolve("DSD1211.nc"));
+
+        MainController.InvalidGeographicCoordinateWarning warning = MainController.invalidGeographicCoordinateWarning(dataset);
+
+        assertTrue(warning.warningRequired());
+        assertTrue(warning.geographicNames());
+        assertTrue(warning.validLongitude());
+        assertFalse(warning.validLatitude());
+        String message = MainController.invalidGeographicCoordinateWarningMessage(warning);
+        assertTrue(message.contains("文件：DSD1211.nc"));
+        assertTrue(message.contains("坐标变量：lon / lat"));
+        assertTrue(message.contains("经度 X 应在 -180 到 180 之间"));
+        assertTrue(message.contains("纬度 Y 应在 -90 到 90 之间"));
+        assertTrue(message.contains("Y：116.6928610 到 116.7508010"));
+        assertTrue(message.contains("Y 超出合法纬度范围"));
+        assertTrue(message.contains("在线底图会被跳过"));
+    }
+
+    @Test
+    void nonGeographicCoordinateNamesDoNotNeedInvalidGeographicWarning() {
+        ParsedDataset dataset = new ParsedDataset(
+            Path.of("local-plane.nc"),
+            null,
+            new SpatialDomain() {
+                @Override
+                public Kind kind() {
+                    return Kind.STRUCTURED_GRID;
+                }
+
+                @Override
+                public double minX() {
+                    return 500000.0;
+                }
+
+                @Override
+                public double maxX() {
+                    return 501000.0;
+                }
+
+                @Override
+                public double minY() {
+                    return 3200000.0;
+                }
+
+                @Override
+                public double maxY() {
+                    return 3201000.0;
+                }
+            },
+            List.of(),
+            null,
+            List.of(),
+            Map.of(),
+            Map.of(),
+            Map.of(),
+            List.of(),
+            "easting",
+            "northing",
+            null
+        );
+
+        MainController.InvalidGeographicCoordinateWarning warning = MainController.invalidGeographicCoordinateWarning(dataset);
+
+        assertFalse(warning.warningRequired());
+        assertFalse(warning.geographicNames());
     }
 
     @Test

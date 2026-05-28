@@ -45,6 +45,9 @@ import javafx.geometry.Point2D;
 import javafx.scene.SnapshotParameters;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.control.Alert;
+import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.SelectionMode;
 import javafx.scene.control.TextInputDialog;
@@ -541,13 +544,176 @@ public final class MainController {
         }
 
         // 6.2 用世界坐标范围判断是否落在经纬度边界内。
-        boolean geographic = spatialDomain.minX() >= -180.000001
-            && spatialDomain.maxX() <= 180.000001
-            && spatialDomain.minY() >= -90.000001
-            && spatialDomain.maxY() <= 90.000001;
+        boolean geographic = isValidLongitudeRange(spatialDomain.minX(), spatialDomain.maxX())
+            && isValidLatitudeRange(spatialDomain.minY(), spatialDomain.maxY());
 
         logger.info(() -> "空间域经纬度判断完成, geographic=" + geographic);
         return geographic;
+    }
+
+    /*
+     * ========================================================================
+     * 步骤7：检查是否需要经纬度异常提醒
+     * ========================================================================
+     * 目标：
+     *   1) 找出名称像经纬度但范围不合法的数据
+     *   2) 避免投影坐标或本地平面坐标被误拦截
+     * 操作要点：
+     *   1) X 轴按经度范围校验
+     *   2) Y 轴按纬度范围校验
+     */
+    static InvalidGeographicCoordinateWarning invalidGeographicCoordinateWarning(ParsedDataset dataset) {
+        logger.info("开始检查数据集经纬度范围提醒...");
+
+        // 7.1 空数据集不需要加载确认。
+        if (dataset == null || dataset.spatialDomain() == null) {
+            InvalidGeographicCoordinateWarning warning = new InvalidGeographicCoordinateWarning(
+                dataset == null ? null : dataset.sourcePath(),
+                dataset == null ? null : dataset.xVariableName(),
+                dataset == null ? null : dataset.yVariableName(),
+                false,
+                false,
+                true,
+                true,
+                Double.NaN,
+                Double.NaN,
+                Double.NaN,
+                Double.NaN
+            );
+            logger.info("数据集经纬度范围提醒检查完成, warningRequired=false");
+            return warning;
+        }
+
+        // 7.2 只有 lon/lat 类命名才认为用户预期它是经纬度。
+        boolean geographicNames = looksLikeLongitudeName(dataset.xVariableName())
+            && looksLikeLatitudeName(dataset.yVariableName());
+        SpatialDomain spatialDomain = dataset.spatialDomain();
+
+        // 7.3 计算 X/Y 范围是否合法。
+        boolean validLongitude = isValidLongitudeRange(spatialDomain.minX(), spatialDomain.maxX());
+        boolean validLatitude = isValidLatitudeRange(spatialDomain.minY(), spatialDomain.maxY());
+        InvalidGeographicCoordinateWarning warning = new InvalidGeographicCoordinateWarning(
+            dataset.sourcePath(),
+            dataset.xVariableName(),
+            dataset.yVariableName(),
+            true,
+            geographicNames,
+            validLongitude,
+            validLatitude,
+            spatialDomain.minX(),
+            spatialDomain.maxX(),
+            spatialDomain.minY(),
+            spatialDomain.maxY()
+        );
+
+        logger.info(() -> "数据集经纬度范围提醒检查完成, warningRequired=" + warning.warningRequired());
+        return warning;
+    }
+
+    /*
+     * ========================================================================
+     * 步骤8：生成经纬度异常提醒文案
+     * ========================================================================
+     * 目标：
+     *   1) 明确说明文件、坐标变量和实际范围
+     *   2) 告知继续加载后的影响边界
+     * 操作要点：
+     *   1) 只描述程序当前实际判断规则
+     *   2) 不自动推断或修正用户数据
+     */
+    static String invalidGeographicCoordinateWarningMessage(InvalidGeographicCoordinateWarning warning) {
+        logger.info(() -> "开始生成经纬度异常提醒文案, sourcePath=" + warning.sourcePath());
+
+        // 8.1 组装范围异常原因。
+        String problem = invalidGeographicProblemText(warning);
+
+        // 8.2 组装完整提醒正文。
+        String message = "文件：" + displayFileName(warning.sourcePath())
+            + System.lineSeparator()
+            + "坐标变量：" + nullSafe(warning.xVariableName()) + " / " + nullSafe(warning.yVariableName())
+            + System.lineSeparator()
+            + System.lineSeparator()
+            + "程序按以下规则判断经纬度："
+            + System.lineSeparator()
+            + "经度 X 应在 -180 到 180 之间"
+            + System.lineSeparator()
+            + "纬度 Y 应在 -90 到 90 之间"
+            + System.lineSeparator()
+            + System.lineSeparator()
+            + "当前文件解析到的范围："
+            + System.lineSeparator()
+            + "X：" + formatCoordinate(warning.minX()) + " 到 " + formatCoordinate(warning.maxX())
+            + System.lineSeparator()
+            + "Y：" + formatCoordinate(warning.minY()) + " 到 " + formatCoordinate(warning.maxY())
+            + System.lineSeparator()
+            + System.lineSeparator()
+            + "问题："
+            + System.lineSeparator()
+            + problem
+            + System.lineSeparator()
+            + "这通常表示经纬度写反、坐标变量命名错误，或文件使用了非经纬度坐标。"
+            + System.lineSeparator()
+            + System.lineSeparator()
+            + "继续加载后："
+            + System.lineSeparator()
+            + "数据仍可渲染和查询。"
+            + System.lineSeparator()
+            + "在线底图会被跳过。"
+            + System.lineSeparator()
+            + "海岸线、底图和实际地理位置可能无法对齐。"
+            + System.lineSeparator()
+            + System.lineSeparator()
+            + "是否仍然加载该文件？";
+
+        logger.info("经纬度异常提醒文案生成完成。");
+        return message;
+    }
+
+    private static String invalidGeographicProblemText(InvalidGeographicCoordinateWarning warning) {
+        if (!warning.validLongitude() && !warning.validLatitude()) {
+            return "X 超出合法经度范围；Y 超出合法纬度范围。";
+        }
+        if (!warning.validLongitude()) {
+            return "X 超出合法经度范围。";
+        }
+        if (!warning.validLatitude()) {
+            return "Y 超出合法纬度范围。";
+        }
+        return "未发现经纬度范围异常。";
+    }
+
+    private static boolean isValidLongitudeRange(double minX, double maxX) {
+        return minX >= -180.000001 && maxX <= 180.000001;
+    }
+
+    private static boolean isValidLatitudeRange(double minY, double maxY) {
+        return minY >= -90.000001 && maxY <= 90.000001;
+    }
+
+    private static boolean looksLikeLongitudeName(String name) {
+        String normalized = nullSafe(name).toLowerCase(Locale.ROOT);
+        return normalized.contains("lon") || normalized.contains("longitude");
+    }
+
+    private static boolean looksLikeLatitudeName(String name) {
+        String normalized = nullSafe(name).toLowerCase(Locale.ROOT);
+        return normalized.contains("lat") || normalized.contains("latitude");
+    }
+
+    private static String displayFileName(Path path) {
+        if (path == null) {
+            return "未知文件";
+        }
+        Path fileName = path.getFileName();
+        return fileName == null ? path.toString() : fileName.toString();
+    }
+
+    private static String nullSafe(String value) {
+        return value == null ? "-" : value;
+    }
+
+    private static String formatCoordinate(double value) {
+        return Double.isFinite(value) ? String.format(Locale.ROOT, "%.7f", value) : "-";
     }
 
     private void wireMouseNavigation() {
@@ -716,8 +882,8 @@ public final class MainController {
             }
         };
 
-        // 读取成功后刷新界面。
-        loadTask.setOnSucceeded(event -> addLoadedDataset(normalizedPath, loadTask.getValue()));
+        // 读取成功后先做加载前确认，再刷新界面。
+        loadTask.setOnSucceeded(event -> confirmAndAddLoadedDataset(normalizedPath, loadTask.getValue()));
         // 读取失败时显示错误并回到占位状态。
         loadTask.setOnFailed(event -> {
             Throwable error = loadTask.getException();
@@ -731,6 +897,78 @@ public final class MainController {
         Thread worker = new Thread(loadTask, "netcdf-load-" + normalizedPath.getFileName());
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /*
+     * ========================================================================
+     * 步骤7：确认并加入已加载数据集
+     * ========================================================================
+     * 目标：
+     *   1) 对经纬度命名但范围异常的数据弹出确认框
+     *   2) 用户继续时才把数据加入列表
+     * 操作要点：
+     *   1) 普通投影坐标或本地平面坐标不打扰用户
+     *   2) 取消加载时保持当前已加载数据不变
+     */
+    private void confirmAndAddLoadedDataset(Path path, ParsedDataset dataset) {
+        logger.info(() -> "开始确认数据集加载, sourcePath=" + path);
+
+        // 7.1 解析当前数据集是否需要经纬度异常提醒。
+        InvalidGeographicCoordinateWarning warning = invalidGeographicCoordinateWarning(dataset);
+
+        // 7.2 需要提醒时弹出确认框，用户取消则停止加入列表。
+        if (warning.warningRequired() && !confirmInvalidGeographicCoordinateWarning(warning)) {
+            setStatus("已取消加载 " + path.getFileName());
+            if (loadedDatasets.isEmpty()) {
+                renderPlaceholder("已取消加载 " + path.getFileName() + "。");
+            }
+            logger.info(() -> "数据集加载确认结束, loaded=false, sourcePath=" + path);
+            return;
+        }
+
+        // 7.3 用户确认或无需提醒时，沿用原有加入列表逻辑。
+        addLoadedDataset(path, dataset);
+
+        logger.info(() -> "数据集加载确认结束, loaded=true, sourcePath=" + path);
+    }
+
+    /*
+     * ========================================================================
+     * 步骤8：弹出经纬度异常确认框
+     * ========================================================================
+     * 目标：
+     *   1) 告诉用户具体哪一项经纬度范围异常
+     *   2) 允许用户取消加载或继续加载
+     * 操作要点：
+     *   1) 默认按钮为取消加载
+     *   2) 继续加载不改变底图跳过规则
+     */
+    private boolean confirmInvalidGeographicCoordinateWarning(InvalidGeographicCoordinateWarning warning) {
+        logger.info(() -> "开始弹出经纬度异常确认框, sourcePath=" + warning.sourcePath());
+
+        // 8.1 创建确认框并填充详细风险说明。
+        ButtonType cancelButton = new ButtonType("取消加载", ButtonBar.ButtonData.CANCEL_CLOSE);
+        ButtonType continueButton = new ButtonType("仍然加载", ButtonBar.ButtonData.OK_DONE);
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.initOwner(stage);
+        alert.setTitle("坐标范围提醒");
+        alert.setHeaderText("经纬度范围异常");
+        alert.setContentText(invalidGeographicCoordinateWarningMessage(warning));
+        alert.getButtonTypes().setAll(cancelButton, continueButton);
+
+        // 8.2 将取消加载设为默认按钮，减少误继续的概率。
+        Button cancelNode = (Button) alert.getDialogPane().lookupButton(cancelButton);
+        Button continueNode = (Button) alert.getDialogPane().lookupButton(continueButton);
+        cancelNode.setDefaultButton(true);
+        continueNode.setDefaultButton(false);
+
+        // 8.3 读取用户选择，只有明确点“仍然加载”才继续。
+        boolean confirmed = alert.showAndWait()
+            .filter(continueButton::equals)
+            .isPresent();
+
+        logger.info(() -> "经纬度异常确认框关闭, confirmed=" + confirmed);
+        return confirmed;
     }
 
     private void addLoadedDataset(Path path, ParsedDataset dataset) {
@@ -2753,6 +2991,24 @@ public final class MainController {
     }
 
     private record OverlayBuildResult<T>(T frame, String message) {
+    }
+
+    record InvalidGeographicCoordinateWarning(
+        Path sourcePath,
+        String xVariableName,
+        String yVariableName,
+        boolean spatialDomainAvailable,
+        boolean geographicNames,
+        boolean validLongitude,
+        boolean validLatitude,
+        double minX,
+        double maxX,
+        double minY,
+        double maxY
+    ) {
+        boolean warningRequired() {
+            return spatialDomainAvailable && geographicNames && (!validLongitude || !validLatitude);
+        }
     }
 
     private static final class VariableCell extends ListCell<VariableInfo> {
